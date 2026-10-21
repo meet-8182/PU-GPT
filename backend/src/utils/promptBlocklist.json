@@ -1,0 +1,20 @@
+{
+  "patterns": [
+    "\\b(nude|naked|nsfw|porn|sex|erotic)\\b",
+    "\\b(violence|gore|blood|murder|kill|weapon|gun|knife)\\b",
+    "\\b(hate|racist|nazi|fascist|supremacist)\\b",
+    "\\b(ssn|social.security|credit.card|password|api.key|secret)\\b"
+  ],
+  "exactWords": [
+    "nude",
+    "naked",
+    "porn",
+    "sex",
+    "erotic",
+    "gore",
+    "murder",
+    "kill",
+    "nazi",
+    "hitler"
+  ]
+}
