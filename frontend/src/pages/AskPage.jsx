@@ -81,6 +81,9 @@ export function AskPage() {
   const fileInputRef = useRef(null);
   // Track the last loaded conversation ID to prevent duplicate loads
   const lastLoadedConvIdRef = useRef(null);
+  // Track if we're mid-stream and already have a conversationId from the backend
+  // This prevents the URL effect from clearing/loading the just-created conversation.
+  const sseConversationIdRef = useRef(null);
 
   // Helper to remove pending file - must be defined before loadConversation
   const removePendingFile = () => {
@@ -144,19 +147,27 @@ export function AskPage() {
   // Fetch subjects
   const fetchSubjects = useCallback(async () => {
     try {
-      await api.get('/chat/history', {
-        params: { limit: 1 },
-      });
+      // Fetch available subjects from teachers
+      const res = await api.get('/chat/subjects');
+      const availableSubjects = res.data?.subjects || [];
+
+      // Also include student's enrolled subjects (for backward compatibility)
+      const userSubjects = user?.subjects || [];
+      const combinedSubjects = [...new Set([...availableSubjects, ...userSubjects])];
+
+      setSubjects(combinedSubjects);
+
+      if (combinedSubjects.length > 0 && !subject) {
+        setSubject(combinedSubjects[0]);
+      }
     } catch (error) {
-      console.error('Failed to fetch chat history:', error);
-    }
-
-    const userSubjects = user?.subjects || [];
-
-    setSubjects(userSubjects);
-
-    if (userSubjects.length > 0 && !subject) {
-      setSubject(userSubjects[0]);
+      console.error('Failed to fetch subjects:', error);
+      // Fallback to user's subjects
+      const userSubjects = user?.subjects || [];
+      setSubjects(userSubjects);
+      if (userSubjects.length > 0 && !subject) {
+        setSubject(userSubjects[0]);
+      }
     }
   }, [user, subject]);
 
@@ -195,6 +206,13 @@ export function AskPage() {
       setStatus(null);
       setPendingQuery(null);
       removePendingFile();
+      sseConversationIdRef.current = null;
+      return;
+    }
+
+    // If we just received a conversationId from SSE, don't reload it from URL.
+    // The SSE event is the authoritative source for newly created conversations.
+    if (sseConversationIdRef.current && urlConversationId === sseConversationIdRef.current) {
       return;
     }
 
@@ -378,8 +396,6 @@ export function AskPage() {
 
     try {
       const token = localStorage.getItem('token');
-      console.log('[Chat] Token:', token ? 'present' : 'MISSING');
-      console.log('[Chat] Subject:', subject, 'Raw query:', rawQuestion, 'File:', fileToSend?.name);
 
       if (!token) {
         setError('Please log in to ask questions');
@@ -520,6 +536,7 @@ export function AskPage() {
       case 'conversationId':
         if (parsed.id) {
           setConversationId(parsed.id);
+          sseConversationIdRef.current = parsed.id;
           // Update URL with conversation ID
           setSearchParams(prev => {
             const newParams = new URLSearchParams(prev);
@@ -770,7 +787,7 @@ export function AskPage() {
 
       <div className="space-y-4">
         {messages.map((msg, index) => (
-          <div key={index} className="animate-in">
+          <div key={index} className="animate-in" data-message-role={msg.role} data-message-index={index}>
             <div className="flex gap-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                 msg.role === 'user' ? 'bg-amber-chalk/20' : 'bg-sage/20'
@@ -842,7 +859,7 @@ export function AskPage() {
         )}
 
         {streaming && (
-        <div className="animate-in">
+        <div className="animate-in" data-message-role="assistant" data-message-streaming="true">
           <div className="flex gap-4">
             <div className="w-8 h-8 rounded-full bg-sage/20 flex items-center justify-center flex-shrink-0">
               <FileText className="w-4 h-4 text-sage" />

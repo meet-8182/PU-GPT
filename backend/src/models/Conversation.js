@@ -13,6 +13,13 @@ const attachmentSchema = new mongoose.Schema({
 const messageSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'assistant'], required: true },
   content: { type: String, required: true },
+  // Used to keep non-substantive turns (greetings, permission offers,
+  // clarification prompts) out of the follow-up history.
+  kind: {
+    type: String,
+    enum: ['normal', 'greeting', 'permission-offer', 'clarification', 'command'],
+    default: 'normal',
+  },
   citations: [{
     chunkId: { type: String },
     documentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Document' },
@@ -29,6 +36,9 @@ const conversationSchema = new mongoose.Schema({
   studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   subject: { type: String, required: true, trim: true },
   title: { type: String, trim: true },
+  // The topic a follow-up message refers to (e.g. "stack"). Persisted so it
+  // survives a page reload and never leaks between chats.
+  focusTopic: { type: String, trim: true, default: null },
   messages: [messageSchema],
   summary: { type: String, trim: true, default: '' },
   summaryTokenCount: { type: Number, default: 0 },

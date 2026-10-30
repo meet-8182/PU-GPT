@@ -12,7 +12,6 @@ import {
   Loader2,
   AlertCircle,
   Upload,
-  Inbox,
   BarChart2,
   Users,
   Database,
@@ -28,7 +27,6 @@ const studentNavItems = [
 
 const teacherNavItems = [
   { path: '/library', label: 'Content Library', icon: Upload },
-  { path: '/flagged', label: 'Flagged Questions', icon: Inbox },
   { path: '/insights', label: 'Topic Insights', icon: BarChart2 },
 ];
 

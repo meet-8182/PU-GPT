@@ -12,7 +12,8 @@ import {
   AlertCircle,
   RefreshCw,
   Activity,
-  Users
+  Users,
+  FileText
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';

@@ -1,5 +1,6 @@
 import { config } from '../config/index.js';
 import { Ollama } from 'ollama';
+import { isExcludedFromHistory } from './followUp.js';
 
 const ollama = new Ollama({ host: config.ollamaHost });
 
@@ -14,8 +15,15 @@ const MODEL_CONTEXT_LIMITS = {
 };
 
 const DEFAULT_CONTEXT_LIMIT = 8192;
+// Hard ceiling for everything we send to the model. Follow-up chats used to
+// send ~5000-token prompts, which pushed the actual answer out of the context
+// window and made the model fall back to a generic overview.
+const MAX_PROMPT_TOKENS = 2800;
+const MIN_ANSWER_TOKENS = 1000;
 const RESERVED_TOKENS_FOR_RESPONSE = 2000;
-const SYSTEM_PROMPT_TOKEN_ESTIMATE = 1500;
+const SYSTEM_PROMPT_TOKEN_ESTIMATE = 1200;
+const MAX_HISTORY_TOKENS = 700;
+const MAX_HISTORY_TURNS = 3;
 const SUMMARY_MAX_TOKENS = 1000;
 const SUMMARY_TRIGGER_THRESHOLD = 0.7;
 
@@ -32,8 +40,10 @@ export function getContextBudget(modelName = 'qwen2.5:3b-instruct-q4_K_M') {
   const limit = getModelContextLimit(modelName);
   return {
     total: limit,
+    maxPromptTokens: MAX_PROMPT_TOKENS,
+    minAnswerTokens: MIN_ANSWER_TOKENS,
     reservedForResponse: RESERVED_TOKENS_FOR_RESPONSE,
-    availableForContext: limit - RESERVED_TOKENS_FOR_RESPONSE - SYSTEM_PROMPT_TOKEN_ESTIMATE,
+    availableForContext: Math.max(0, MAX_PROMPT_TOKENS - SYSTEM_PROMPT_TOKEN_ESTIMATE),
   };
 }
 
@@ -148,6 +158,62 @@ export function formatHistoryForPrompt(messages) {
   ).join('\n\n');
 }
 
+/**
+ * Build the follow-up history from persisted messages only. Greetings,
+ * permission offers/responses, clarification prompts and memory commands are
+ * excluded so they can never become the "previous topic".
+ */
+export function buildHistoryFromMessages(messages = [], options = {}) {
+  const {
+    maxTurns = MAX_HISTORY_TURNS,
+    maxCharsPerMessage = 600,
+    maxTotalTokens = MAX_HISTORY_TOKENS,
+  } = options;
+
+  const filtered = (messages || []).filter(
+    msg => msg && msg.content && String(msg.content).trim() && !isExcludedFromHistory(msg)
+  );
+
+  // Walk backwards collecting user/assistant pairs, newest first.
+  const pairs = [];
+  let pendingAssistant = null;
+  for (let i = filtered.length - 1; i >= 0 && pairs.length < maxTurns; i--) {
+    const msg = filtered[i];
+    if (!pendingAssistant) {
+      if (msg.role === 'assistant') pendingAssistant = msg;
+      continue;
+    }
+    if (msg.role === 'user') {
+      pairs.push([msg, pendingAssistant]);
+      pendingAssistant = null;
+    }
+  }
+
+  const ordered = pairs.reverse().flat();
+  const lines = [];
+  let usedTokens = 0;
+
+  for (const msg of ordered) {
+    const role = msg.role === 'user' ? 'Student' : 'Assistant';
+    let content = String(msg.content || '').trim();
+    if (content.length > maxCharsPerMessage) {
+      content = `${content.slice(0, maxCharsPerMessage).trimEnd()}…`;
+    }
+    const line = `${role}: ${content}`;
+    const lineTokens = estimateTokens(line);
+    if (usedTokens + lineTokens > maxTotalTokens) break;
+    lines.push(line);
+    usedTokens += lineTokens;
+  }
+
+  return {
+    text: lines.join('\n\n'),
+    turns: pairs.length,
+    messageCount: ordered.length,
+    tokens: usedTokens,
+  };
+}
+
 export function formatMemoriesForPrompt(memories) {
   if (!memories || memories.length === 0) return '';
   
@@ -170,30 +236,86 @@ export function buildFinalPrompt({
   memoryContext,
   conversationSummary,
   recentHistory,
+  followUpLine,
+  topicNote,
   retrievedDocs,
   currentQuestion,
+  maxPromptTokens = MAX_PROMPT_TOKENS,
 }) {
-  const parts = [systemPrompt];
+  const systemTokens = estimateTokens(systemPrompt);
+  const questionTokens = estimateTokens(currentQuestion) + 20;
+  let remaining = Math.max(200, maxPromptTokens - systemTokens - questionTokens);
 
-  if (memoryContext) {
-    parts.push(`\n--- USER MEMORIES (for personalization only, not as factual evidence) ---\n${memoryContext}`);
+  const followUpTokens = estimateTokens(followUpLine);
+  const topicNoteTokens = estimateTokens(topicNote);
+  remaining = Math.max(100, remaining - followUpTokens - topicNoteTokens);
+
+  const memoryBudget = memoryContext ? Math.min(Math.round(remaining * 0.12), 140) : 0;
+  const summaryBudget = conversationSummary ? Math.min(Math.round(remaining * 0.15), 220) : 0;
+  const historyBudget = recentHistory ? Math.min(Math.round(remaining * 0.32), MAX_HISTORY_TOKENS) : 0;
+  const docsBudget = Math.max(0, remaining - memoryBudget - summaryBudget - historyBudget);
+
+  let safeMemory = truncateToTokenBudget(memoryContext, memoryBudget);
+  let safeSummary = truncateToTokenBudget(conversationSummary, summaryBudget);
+  let safeHistory = truncateToTokenBudget(recentHistory, historyBudget);
+  let safeDocs = truncateToTokenBudget(retrievedDocs, docsBudget);
+
+  const assemble = () => {
+    const parts = [systemPrompt];
+    if (safeMemory) {
+      parts.push(`\n--- USER MEMORIES (for personalization only, not as factual evidence) ---\n${safeMemory}`);
+    }
+    if (safeSummary) {
+      parts.push(`\n--- CONVERSATION SUMMARY ---\n${safeSummary}`);
+    }
+    if (safeHistory) {
+      parts.push(`\n--- RECENT CONVERSATION (last 3 turns) ---\n${safeHistory}`);
+    }
+    if (followUpLine) {
+      parts.push(`\n${followUpLine}`);
+    }
+    if (topicNote) {
+      parts.push(`\n${topicNote}`);
+    }
+    if (safeDocs) {
+      parts.push(`\n--- RETRIEVED COURSE MATERIAL ---\n${safeDocs}`);
+    }
+    parts.push(`\n--- CURRENT QUESTION ---\n${currentQuestion}`);
+    return parts.join('\n');
+  };
+
+  let prompt = assemble();
+
+  // Hard cap: trim the least critical blocks first, never the system prompt or
+  // the current question.
+  if (estimateTokens(prompt) > maxPromptTokens) {
+    let overflow = estimateTokens(prompt) - maxPromptTokens;
+    const docsTokens = estimateTokens(safeDocs);
+    if (docsTokens > 0) {
+      safeDocs = truncateToTokenBudget(safeDocs, Math.max(0, docsTokens - overflow));
+      prompt = assemble();
+      overflow = estimateTokens(prompt) - maxPromptTokens;
+    }
+    if (overflow > 0 && estimateTokens(safeHistory) > 0) {
+      safeHistory = truncateToTokenBudget(safeHistory, Math.max(0, estimateTokens(safeHistory) - overflow));
+      prompt = assemble();
+      overflow = estimateTokens(prompt) - maxPromptTokens;
+    }
+    if (overflow > 0 && estimateTokens(safeSummary) > 0) {
+      safeSummary = '';
+      prompt = assemble();
+    }
+    if (estimateTokens(prompt) > maxPromptTokens) {
+      // Last resort: hard character cut on the docs section.
+      const excessChars = Math.ceil((estimateTokens(prompt) - maxPromptTokens) * 3.5);
+      if (safeDocs) {
+        safeDocs = safeDocs.slice(0, Math.max(0, safeDocs.length - excessChars - 20));
+        prompt = assemble();
+      }
+    }
   }
 
-  if (conversationSummary) {
-    parts.push(`\n--- CONVERSATION SUMMARY ---\n${conversationSummary}`);
-  }
-
-  if (recentHistory) {
-    parts.push(`\n--- RECENT CONVERSATION ---\n${recentHistory}`);
-  }
-
-  if (retrievedDocs) {
-    parts.push(`\n--- RETRIEVED COURSE MATERIAL ---\n${retrievedDocs}`);
-  }
-
-  parts.push(`\n--- CURRENT QUESTION ---\n${currentQuestion}`);
-
-  return parts.join('\n');
+  return prompt;
 }
 
 /**
@@ -306,6 +428,9 @@ export function getUnsummarizedMessages(conversation) {
 
 export {
   MODEL_CONTEXT_LIMITS,
+  MAX_PROMPT_TOKENS,
+  MIN_ANSWER_TOKENS,
+  MAX_HISTORY_TURNS,
   RESERVED_TOKENS_FOR_RESPONSE,
   SYSTEM_PROMPT_TOKEN_ESTIMATE,
   SUMMARY_MAX_TOKENS,

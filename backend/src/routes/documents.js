@@ -4,14 +4,26 @@ import multer from 'multer';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { Document } from '../models/index.js';
-import { authenticate, authorize, validate, validateQuery, AppError } from '../middleware/index.js';
+import {
+  requireAuth,
+  authorize,
+  validate,
+  validateQuery,
+  validateParams,
+  AppError,
+} from '../middleware/index.js';
 import { config } from '../config/index.js';
 import { processDocument, processDocumentWithText, deleteDocumentChunks } from '../services/ingestion.js';
 import { extractText } from '../services/ocrService.js';
-import { validateImageFile, safeDeleteFile, ensureDir } from '../utils/fileValidation.js';
+import { safeDeleteFile } from '../utils/fileValidation.js';
 import fs from 'fs/promises';
 
 const router = express.Router();
+
+const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID');
+
+// Every document route requires authentication. Role checks stay per-route.
+router.use(requireAuth);
 
 // Storage for document uploads (teacher/admin)
 const docStorage = multer.diskStorage({
@@ -123,7 +135,7 @@ async function processDocumentWithOCR(documentId, filePath, fileType, subject) {
   }
 }
 
-router.post('/upload', authenticate, authorize('teacher', 'admin'), docUpload.single('file'), async (req, res, next) => {
+router.post('/upload', authorize('teacher', 'admin'), docUpload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       throw new AppError('No file uploaded', 400);
@@ -131,6 +143,7 @@ router.post('/upload', authenticate, authorize('teacher', 'admin'), docUpload.si
 
     const parsed = uploadSchema.safeParse(req.body);
     if (!parsed.success) {
+      await safeDeleteFile(req.file.path);
       return res.status(400).json({
         error: 'Validation failed',
         details: parsed.error.errors.map(e => ({ field: e.path.join('.'), message: e.message })),
@@ -140,7 +153,8 @@ router.post('/upload', authenticate, authorize('teacher', 'admin'), docUpload.si
     const { college, department, subject, semester, unit } = parsed.data;
 
     // Check if teacher has access to this subject
-    if (req.user.role === 'teacher' && !req.user.subjects.includes(subject)) {
+    if (req.user.role === 'teacher' && !(req.user.subjects || []).includes(subject)) {
+      await safeDeleteFile(req.file.path);
       throw new AppError('You do not have permission to upload to this subject', 403);
     }
 
@@ -200,83 +214,87 @@ router.post('/upload', authenticate, authorize('teacher', 'admin'), docUpload.si
   }
 });
 
-// Debug endpoint to test document processing
-router.post('/debug/process/:id', authenticate, authorize('teacher', 'admin'), async (req, res, next) => {
-  try {
-    const document = await Document.findById(req.params.id);
-    if (!document) {
-      return res.status(404).json({ error: 'Document not found' });
-    }
+// Debug endpoints are opt-in (ENABLE_DEBUG_ROUTES) and restricted to admins.
+// They are disabled by default in production.
+if (config.enableDebugRoutes) {
+  router.post('/debug/process/:id', authorize('admin'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
+    try {
+      const document = await Document.findById(req.params.id);
+      if (!document) {
+        return res.status(404).json({ error: 'Document not found' });
+      }
 
-    console.log('=== MANUAL PROCESS START ===', document.title);
-    console.log('fileUrl:', document.fileUrl);
-    console.log('fileType:', document.fileType);
-    console.log('needsOCR:', document.needsOCR);
+      console.log('=== MANUAL PROCESS START ===', document.title);
+      console.log('fileUrl:', document.fileUrl);
+      console.log('fileType:', document.fileType);
+      console.log('needsOCR:', document.needsOCR);
 
-    let result;
-    if (document.fileUrl === 'teacher-response') {
-      console.log('Using processDocumentWithText - but need original text');
-      document.status = 'failed';
-      document.errorMessage = 'Cannot reprocess teacher-generated content without original response text';
-      await document.save();
-      return res.json({ success: false, message: 'Cannot reprocess teacher-generated content without original text' });
-    } else {
-      // Delete old vectors first
-      await deleteDocumentChunks(document._id);
-
-      if (document.needsOCR) {
-        result = await processDocumentWithOCR(document._id, document.fileUrl, document.fileType, document.subject);
+      let result;
+      if (document.fileUrl === 'teacher-response') {
+        console.log('Using processDocumentWithText - but need original text');
+        document.status = 'failed';
+        document.errorMessage = 'Cannot reprocess teacher-generated content without original response text';
+        await document.save();
+        return res.json({ success: false, message: 'Cannot reprocess teacher-generated content without original text' });
       } else {
-        result = await processDocument(document._id);
-      }
-    }
+        // Delete old vectors first
+        await deleteDocumentChunks(document._id);
 
-    console.log('=== MANUAL PROCESS END ===', 'success');
-    const updated = await Document.findById(req.params.id);
-    res.json({ success: true, document: updated });
-  } catch (err) {
-    console.error('=== MANUAL PROCESS ERROR ===', err);
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
-
-// Bulk reprocess all failed/processing documents
-router.post('/debug/reprocess-all', authenticate, authorize('teacher', 'admin'), async (req, res, next) => {
-  try {
-    const documents = await Document.find({
-      status: { $in: ['processing', 'failed', 'ocr_processing'] },
-      fileUrl: { $ne: 'teacher-response' }
-    }).select('_id title needsOCR fileUrl fileType subject');
-
-    console.log(`Found ${documents.length} documents to reprocess`);
-
-    const results = [];
-    for (const doc of documents) {
-      try {
-        console.log(`Reprocessing: ${doc.title}`);
-        await deleteDocumentChunks(doc._id);
-
-        if (doc.needsOCR) {
-          await processDocumentWithOCR(doc._id, doc.fileUrl, doc.fileType, doc.subject);
+        if (document.needsOCR) {
+          result = await processDocumentWithOCR(document._id, document.fileUrl, document.fileType, document.subject);
         } else {
-          await processDocument(doc._id);
+          result = await processDocument(document._id);
         }
-
-        results.push({ id: doc._id, title: doc.title, success: true });
-      } catch (err) {
-        console.error(`Failed to reprocess ${doc.title}:`, err.message);
-        results.push({ id: doc._id, title: doc.title, success: false, error: err.message });
       }
+
+      console.log('=== MANUAL PROCESS END ===', 'success');
+      const updated = await Document.findById(req.params.id);
+      res.json({ success: true, document: updated });
+    } catch (err) {
+      console.error('=== MANUAL PROCESS ERROR ===', err);
+      // Never return stack traces to the client.
+      next(new AppError('Document processing failed', 500));
     }
+  });
 
-    res.json({ processed: results.length, results });
-  } catch (err) {
-    console.error('BULK REPROCESS ERROR:', err);
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
+  // Bulk reprocess all failed/processing documents
+  router.post('/debug/reprocess-all', authorize('admin'), async (req, res, next) => {
+    try {
+      const documents = await Document.find({
+        status: { $in: ['processing', 'failed', 'ocr_processing'] },
+        fileUrl: { $ne: 'teacher-response' }
+      }).select('_id title needsOCR fileUrl fileType subject');
 
-router.get('/', authenticate, authorize('teacher', 'admin'), validateQuery(querySchema), async (req, res, next) => {
+      console.log(`Found ${documents.length} documents to reprocess`);
+
+      const results = [];
+      for (const doc of documents) {
+        try {
+          console.log(`Reprocessing: ${doc.title}`);
+          await deleteDocumentChunks(doc._id);
+
+          if (doc.needsOCR) {
+            await processDocumentWithOCR(doc._id, doc.fileUrl, doc.fileType, doc.subject);
+          } else {
+            await processDocument(doc._id);
+          }
+
+          results.push({ id: doc._id, title: doc.title, success: true });
+        } catch (err) {
+          console.error(`Failed to reprocess ${doc.title}:`, err.message);
+          results.push({ id: doc._id, title: doc.title, success: false, error: 'Processing failed' });
+        }
+      }
+
+      res.json({ processed: results.length, results });
+    } catch (err) {
+      console.error('BULK REPROCESS ERROR:', err);
+      next(new AppError('Bulk reprocessing failed', 500));
+    }
+  });
+}
+
+router.get('/', authorize('teacher', 'admin'), validateQuery(querySchema), async (req, res, next) => {
   try {
     const { department, subject, semester, status, page, limit } = req.query;
     const filter = {};
@@ -325,7 +343,7 @@ router.get('/', authenticate, authorize('teacher', 'admin'), validateQuery(query
   }
 });
 
-router.get('/subjects', authenticate, authorize('teacher', 'admin'), async (req, res, next) => {
+router.get('/subjects', authorize('teacher', 'admin'), async (req, res, next) => {
   try {
     const filter = req.user.role === 'teacher' ? { uploadedBy: req.user._id } : {};
     const subjects = await Document.distinct('subject', filter);
@@ -335,7 +353,7 @@ router.get('/subjects', authenticate, authorize('teacher', 'admin'), async (req,
   }
 });
 
-router.delete('/:id', authenticate, authorize('teacher', 'admin'), async (req, res, next) => {
+router.delete('/:id', authorize('teacher', 'admin'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
   try {
     const filter = { _id: req.params.id };
     if (req.user.role === 'teacher') {

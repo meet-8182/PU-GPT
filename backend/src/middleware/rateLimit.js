@@ -1,28 +1,69 @@
 import { config } from '../config/index.js';
-import { AppError } from './errorHandler.js';
 
 /**
- * In-memory rate limiter (per user per endpoint type)
- * For production with multiple instances, use Redis-based rate limiting
+ * In-memory rate limiting / lockout helpers.
+ *
+ * For production with multiple instances, back this with Redis so limits are
+ * shared between processes.
  */
 const rateLimitStore = new Map();
+const loginFailures = new Map();
 
-/**
- * Cleanup old entries periodically
- */
-setInterval(() => {
+const clientIp = (req) => req.ip || req.socket?.remoteAddress || 'unknown';
+
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [key, data] of rateLimitStore.entries()) {
-    if (now - data.resetTime > 60000) {
-      rateLimitStore.delete(key);
-    }
+    if (now >= data.expiresAt) rateLimitStore.delete(key);
+  }
+  for (const [key, data] of loginFailures.entries()) {
+    if (now >= data.expiresAt) loginFailures.delete(key);
   }
 }, 60000);
 
+// Do not keep the process alive just for cleanup (useful for tests/scripts).
+cleanupTimer.unref?.();
+
 /**
- * Creates a rate limiter middleware
+ * Sliding-window limiter factory.
+ */
+export function createWindowLimiter({ name, windowMs, max, keyGenerator }) {
+  return (req, res, next) => {
+    const key = `ratelimit:${name}:${keyGenerator(req)}`;
+    const now = Date.now();
+
+    let data = rateLimitStore.get(key);
+    if (!data || now >= data.expiresAt) {
+      data = { count: 0, expiresAt: now + windowMs };
+      rateLimitStore.set(key, data);
+    }
+
+    data.count++;
+
+    const remaining = Math.max(0, max - data.count);
+    const resetIn = Math.max(0, Math.ceil((data.expiresAt - now) / 1000));
+
+    res.set({
+      'X-RateLimit-Limit': String(max),
+      'X-RateLimit-Remaining': String(remaining),
+      'X-RateLimit-Reset': String(resetIn),
+    });
+
+    if (data.count > max) {
+      res.set('Retry-After', String(resetIn));
+      return res.status(429).json({
+        error: `Too many requests. Try again in ${resetIn} seconds.`,
+        retryAfter: resetIn,
+      });
+    }
+
+    next();
+  };
+}
+
+/**
+ * Creates a per-user rate limiter middleware.
  * @param {string} type - 'ocr' | 'generate' | 'history'
- * @returns Express middleware
  */
 export function createRateLimiter(type) {
   const limits = {
@@ -31,49 +72,69 @@ export function createRateLimiter(type) {
     history: config.rateLimitImageHistoryPerMin,
   };
 
-  const maxRequests = limits[type] || 60;
+  return createWindowLimiter({
+    name: type,
+    windowMs: 60000,
+    max: limits[type] || 60,
+    keyGenerator: (req) => (req.user ? req.user._id.toString() : clientIp(req)),
+  });
+}
 
-  return (req, res, next) => {
-    if (!req.user) {
-      return next();
-    }
+// Per-IP limits on credential endpoints (brute force / credential stuffing).
+export const loginRateLimit = createWindowLimiter({
+  name: 'auth:login',
+  windowMs: config.rateLimitLoginWindowMs,
+  max: config.rateLimitLoginPerWindow,
+  keyGenerator: clientIp,
+});
 
-    const userId = req.user._id.toString();
-    const key = `ratelimit:${type}:${userId}`;
-    const now = Date.now();
+export const registerRateLimit = createWindowLimiter({
+  name: 'auth:register',
+  windowMs: config.rateLimitRegisterWindowMs,
+  max: config.rateLimitRegisterPerWindow,
+  keyGenerator: clientIp,
+});
 
-    let data = rateLimitStore.get(key);
+/**
+ * Per-account lockout after repeated failed logins.
+ */
+const failureKey = (email) => `login:${String(email || '').trim().toLowerCase()}`;
 
-    if (!data || now - data.resetTime >= 60000) {
-      // New window
-      data = {
-        count: 0,
-        resetTime: now,
-      };
-      rateLimitStore.set(key, data);
-    }
+export function getLoginLockout(email) {
+  const key = failureKey(email);
+  const data = loginFailures.get(key);
+  if (!data) return { locked: false, retryAfter: 0 };
 
-    data.count++;
+  const now = Date.now();
+  if (data.lockedUntil && now < data.lockedUntil) {
+    return { locked: true, retryAfter: Math.ceil((data.lockedUntil - now) / 1000) };
+  }
 
-    const remaining = Math.max(0, maxRequests - data.count);
-    const resetIn = Math.ceil((60000 - (now - data.resetTime)) / 1000);
+  if (now >= data.expiresAt) loginFailures.delete(key);
+  return { locked: false, retryAfter: 0 };
+}
 
-    // Set rate limit headers
-    res.set({
-      'X-RateLimit-Limit': maxRequests,
-      'X-RateLimit-Remaining': remaining,
-      'X-RateLimit-Reset': resetIn,
-    });
+export function recordLoginFailure(email) {
+  const key = failureKey(email);
+  const now = Date.now();
+  const current = loginFailures.get(key);
 
-    if (data.count > maxRequests) {
-      return res.status(429).json({
-        error: `Rate limit exceeded. Maximum ${maxRequests} requests per minute for ${type}.`,
-        retryAfter: resetIn,
-      });
-    }
+  const data = current && now < current.expiresAt
+    ? current
+    : { count: 0, lockedUntil: 0, expiresAt: now + config.loginLockoutMs };
 
-    next();
-  };
+  data.count++;
+  if (data.count >= config.loginLockoutThreshold) {
+    data.lockedUntil = now + config.loginLockoutMs;
+    data.expiresAt = data.lockedUntil;
+  }
+
+  loginFailures.set(key, data);
+  return { locked: data.count >= config.loginLockoutThreshold };
+}
+
+export function clearLoginFailures(email) {
+  loginFailures.delete(failureKey(email));
 }
 
 /**

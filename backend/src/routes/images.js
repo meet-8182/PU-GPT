@@ -5,7 +5,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { GeneratedImage } from '../models/index.js';
 import { Document } from '../models/index.js';
-import { authenticate, authorize, validate, validateQuery, AppError } from '../middleware/index.js';
+import { requireAuth, authorize, validate, validateQuery, validateParams, AppError } from '../middleware/index.js';
 import { config } from '../config/index.js';
 import { ocrRateLimit, generateRateLimit, historyRateLimit } from '../middleware/rateLimit.js';
 import { validateImageFile, sanitizeFilename, safeDeleteFile, ensureDir } from '../utils/fileValidation.js';
@@ -19,6 +19,8 @@ import fs from 'fs/promises';
 const router = express.Router();
 
 // Multer config for image uploads (OCR and document upload)
+const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID');
+
 const imageStorage = multer.diskStorage({
   destination: async (req, file, cb) => {
     const tempDir = path.join(config.uploadDir, 'temp');
@@ -86,11 +88,17 @@ router.get('/health', async (req, res, next) => {
 });
 
 /**
+ * Private routes below require authentication. The public health endpoint is
+ * declared above this guard.
+ */
+router.use(requireAuth);
+
+/**
  * POST /api/images/ocr
  * Extract text from uploaded image/PDF
  * Student, Teacher, Admin
  */
-router.post('/ocr', authenticate, authorize('student', 'teacher', 'admin'), ocrRateLimit, imageUpload.single('file'), validate(ocrUploadSchema), async (req, res, next) => {
+router.post('/ocr', authorize('student', 'teacher', 'admin'), ocrRateLimit, imageUpload.single('file'), validate(ocrUploadSchema), async (req, res, next) => {
   let tempFilePath = null;
 
   try {
@@ -127,7 +135,7 @@ router.post('/ocr', authenticate, authorize('student', 'teacher', 'admin'), ocrR
  * Create image generation job
  * Student, Teacher, Admin
  */
-router.post('/generate', authenticate, authorize('student', 'teacher', 'admin'), generateRateLimit, validate(generateSchema), async (req, res, next) => {
+router.post('/generate', authorize('student', 'teacher', 'admin'), generateRateLimit, validate(generateSchema), async (req, res, next) => {
   try {
     const { prompt, width, height, seed } = req.body;
 
@@ -171,7 +179,7 @@ router.post('/generate', authenticate, authorize('student', 'teacher', 'admin'),
  * GET /api/images/jobs/:id
  * Get job status (owner or admin)
  */
-router.get('/jobs/:id', authenticate, async (req, res, next) => {
+router.get('/jobs/:id', validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
   try {
     const imageDoc = await GeneratedImage.findById(req.params.id);
     if (!imageDoc) {
@@ -216,7 +224,7 @@ router.get('/jobs/:id', authenticate, async (req, res, next) => {
  * GET /api/images/history
  * Paginated list of user's generated images
  */
-router.get('/history', authenticate, authorize('student', 'teacher', 'admin'), historyRateLimit, validateQuery(historyQuerySchema), async (req, res, next) => {
+router.get('/history', authorize('student', 'teacher', 'admin'), historyRateLimit, validateQuery(historyQuerySchema), async (req, res, next) => {
   try {
     const { page, limit, status } = req.query;
     const filter = { userId: req.user._id };
@@ -262,7 +270,7 @@ router.get('/history', authenticate, authorize('student', 'teacher', 'admin'), h
  * GET /api/images/file/:id
  * Serve generated image file (auth required)
  */
-router.get('/file/:id', authenticate, async (req, res, next) => {
+router.get('/file/:id', validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
   try {
     const imageDoc = await GeneratedImage.findById(req.params.id);
     if (!imageDoc) {
@@ -285,11 +293,13 @@ router.get('/file/:id', authenticate, async (req, res, next) => {
       throw new AppError('Image file not found on disk', 404);
     }
 
+    const safeFileName = path.basename(imageDoc.fileName || 'image.png').replace(/["\r\n]/g, '');
+
     res.sendFile(path.resolve(imageDoc.filePath), {
       headers: {
         'Content-Type': 'image/png',
         'Cache-Control': 'private, max-age=3600',
-        'Content-Disposition': `inline; filename="${imageDoc.fileName}"`,
+        'Content-Disposition': `inline; filename="${safeFileName}"`,
       },
     });
   } catch (err) {
@@ -301,7 +311,7 @@ router.get('/file/:id', authenticate, async (req, res, next) => {
  * DELETE /api/images/:id
  * Delete generated image (owner or admin)
  */
-router.delete('/:id', authenticate, authorize('student', 'teacher', 'admin'), async (req, res, next) => {
+router.delete('/:id', authorize('student', 'teacher', 'admin'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
   try {
     const filter = { _id: req.params.id };
     if (req.user.role !== 'admin') {

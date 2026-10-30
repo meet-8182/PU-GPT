@@ -2,11 +2,38 @@ import { z } from 'zod';
 import express from 'express';
 import multer from 'multer';
 import { Conversation, User } from '../models/index.js';
-import { authenticate, authorize, validate, validateQuery, AppError } from '../middleware/index.js';
-import { processChatQuestion, saveConversation, getConversationHistory, webSearch, confirmWebSearch, callWebSearchLLM, detectWebSearchTrigger, sanitizeQuery, expandQueryForRetrieval, extractCitations, getConversationMessages } from '../services/chat.js';
+import { requireAuth, authorize, validate, validateQuery, validateParams, AppError } from '../middleware/index.js';
+import {
+  processChatQuestion,
+  saveConversation,
+  getConversationHistory,
+  webSearch,
+  confirmWebSearch,
+  callWebSearchLLM,
+  detectWebSearchTrigger,
+  sanitizeQuery,
+  expandQueryForRetrieval,
+  extractCitations,
+  getConversationMessages,
+} from '../services/chat.js';
 import { config } from '../config/index.js';
 
 const router = express.Router();
+
+const objectIdSchema = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid ID');
+
+// Every chat route requires authentication.
+router.use(requireAuth);
+
+// GET /api/chat/subjects - Get all available subjects (subjects with teachers)
+router.get('/subjects', async (req, res, next) => {
+  try {
+    const subjects = await User.distinct('subjects', { role: 'teacher' });
+    res.json({ subjects: subjects.filter(s => s).sort() });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Multer config for image/PDF uploads in chat
 const upload = multer({
@@ -28,12 +55,26 @@ const askSchema = z.object({
 });
 
 /**
+ * Resolve or create a conversation document for the student. Returns the
+ * conversation and a flag indicating whether it was newly created.
+ */
+async function resolveConversation(studentId, subject, conversationId) {
+  if (conversationId) {
+    const existing = await Conversation.findOne({ _id: conversationId, studentId }).lean();
+    if (existing) return { conversation: existing, isNew: false };
+  }
+  // New conversation
+  const created = await Conversation.create({ studentId, subject, messages: [] });
+  return { conversation: created, isNew: true };
+}
+
+/**
  * POST /api/chat/ask
  * Accepts both JSON and multipart/form-data
  * multipart fields: question, subject, conversationId (optional), file (optional image/PDF)
  * Web search trigger: leading backslash in question (\ or ＼)
  */
-router.post('/ask', authenticate, authorize('student'), upload.single('file'), async (req, res, next) => {
+router.post('/ask', authorize('student'), upload.single('file'), async (req, res, next) => {
   try {
     // Handle both JSON and multipart
     const rawQuestion = req.body.question || '';
@@ -49,8 +90,13 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
       throw new AppError('Subject is required', 400);
     }
 
-    if (!req.user.subjects.includes(subject)) {
-      throw new AppError('You are not enrolled in this subject', 403);
+    // Allow subjects that student is enrolled in OR subjects that have teachers
+    const studentSubjects = req.user.subjects || [];
+    if (!studentSubjects.includes(subject)) {
+      const teacherWithSubject = await User.findOne({ role: 'teacher', subjects: subject });
+      if (!teacherWithSubject) {
+        throw new AppError('Subject not available', 403);
+      }
     }
 
     // Validate question length if provided
@@ -62,20 +108,27 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
     const fileMimeType = req.file?.mimetype || null;
 
     // Step 1: Detect web search trigger FIRST (before sanitization)
-    const { query: strippedQuery, isWebSearch } = detectWebSearchTrigger(rawQuestion);
+    const { query: strippedQuery, isWebSearch: triggerIsWebSearch } = detectWebSearchTrigger(rawQuestion);
     
     // Step 2: Sanitize the query (no backslash handling here)
     const sanitizedQuestion = sanitizeQuery(strippedQuery, subject);
     
     console.log('[Route] Raw question:', rawQuestion);
-    console.log('[Route] isWebSearch:', isWebSearch);
+    console.log('[Route] isWebSearch trigger:', triggerIsWebSearch);
     console.log('[Route] Stripped query:', strippedQuery);
     console.log('[Route] Sanitized query:', sanitizedQuestion);
     console.log('[Route] Has file:', !!fileBuffer);
 
+    // Resolve or create conversation BEFORE streaming so we can emit its id
+    // as the very first SSE event.
+    const { conversation, isNew } = await resolveConversation(studentId, subject, conversationId);
+    const activeConversationId = conversation._id.toString();
+    
+    console.log('[Route] Conversation resolved:', { id: activeConversationId, isNew });
+
     // If explicit web search requested, skip RAG and go directly to web search
     let result;
-    if (isWebSearch) {
+    if (triggerIsWebSearch) {
       console.log('[Route] isWebSearch=true, calling confirmWebSearch');
       const student = await User.findById(studentId).lean();
       const studentProfile = {
@@ -90,24 +143,22 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
       result.webSearch = true;
     } else {
       console.log('[Route] isWebSearch=false, calling processChatQuestion');
-      // Pass isWebSearch to processChatQuestion for proper handling
-      result = await processChatQuestion(studentId, sanitizedQuestion, subject, conversationId, fileBuffer, fileMimeType, isWebSearch);
+      // Pass the resolved conversation so processChatQuestion can use its focusTopic
+      result = await processChatQuestion(studentId, sanitizedQuestion, subject, activeConversationId, fileBuffer, fileMimeType, false, conversation);
     }
     console.log('[Route] Result type:', result ? (result.stream ? 'stream' : 'permission') : 'none', 'webSearch:', result?.webSearch);
 
-    if (result.needsPermission) {
-      // Send as SSE event instead of JSON response
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.flushHeaders();
-
-      res.write(`data: ${JSON.stringify({ type: 'permission', permissionPrompt: result.permissionPrompt, message: result.message })}\n\n`);
-      res.write('data: [DONE]\n\n');
-      res.end();
-      return;
+    // If this is a new self-contained question with a focusTopic, update the
+    // conversation object in memory immediately so follow-ups in subsequent
+    // requests will see it. Also persist to DB.
+    if (result.focusTopic && result.messageKind === 'normal') {
+      // Update in-memory conversation object for any subsequent use
+      if (conversation) {
+        conversation.focusTopic = result.focusTopic;
+      }
+      // Persist to DB
+      await Conversation.findByIdAndUpdate(activeConversationId, { focusTopic: result.focusTopic });
+      console.log('[Route] Pre-stream update conversation focusTopic:', result.focusTopic);
     }
 
     // Set up SSE
@@ -118,10 +169,29 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
 
+    // Emit conversationId as the FIRST event so the frontend can store it
+    // before any content arrives. This prevents the URL effect from loading
+    // a different/new conversation.
+    res.write(`data: ${JSON.stringify({ type: 'conversationId', id: activeConversationId })}\n\n`);
+
+    if (result.needsPermission || result.permissionPrompt) {
+      const permissionPrompt = result.permissionPrompt || {
+        message: result.message || "I couldn't find enough relevant information. Would you like me to search the web?",
+        options: [
+          { label: 'Yes, search the web', value: 'yes' },
+          { label: "No, I'll rephrase my question", value: 'no' },
+        ],
+        context: [],
+      };
+      res.write(`data: ${JSON.stringify({ type: 'permission', permissionPrompt, message: permissionPrompt.message })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
     let fullAnswer = '';
     const context = result.context;
     const userAttachments = result.userAttachments || [];
-    let conversationIdResult = conversationId;
 
     // Wrap the streaming in a try-catch to handle stream errors
     try {
@@ -135,9 +205,6 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
         // Accumulate content for saving
         if (chunk.type === 'content') {
           fullAnswer += chunk.content;
-        }
-        if (chunk.type === 'conversationId') {
-          conversationIdResult = chunk.id;
         }
       }
       console.log('[Route] Stream iteration complete, total chunks:', routeChunkCount, 'fullAnswer length:', fullAnswer.length);
@@ -173,7 +240,8 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
       content: req.body.question || (fileBuffer ? '[File]' : ''),
       citations: [],
       attachments: userAttachments, // Include all attachment types (image, pdf)
-      timestamp: new Date()
+      timestamp: new Date(),
+      kind: result.messageKind || 'normal',
     };
 
     // Include file data in assistant message for follow-up context
@@ -189,19 +257,29 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
         pages: result.fileData.pages,
         usedVision: result.fileData.usedVision,
       } : undefined,
-      timestamp: new Date()
+      timestamp: new Date(),
+      kind: result.webSearch ? 'normal' : 'normal',
     };
 
+    // Get existing messages from the conversation we already have
+    const existingMessages = conversation.messages || [];
+    
     const messages = [
-      ...(await getConversationMessages(conversationIdResult)),
+      ...existingMessages,
       userMessage,
       assistantMessage,
     ];
 
-    await saveConversation(studentId, subject, messages, conversationIdResult, {
+    // Persist with updated focusTopic from the analysis
+    await saveConversation(studentId, subject, messages, activeConversationId, {
       triggerSummarization: true,
       triggerMemoryExtraction: true,
     });
+
+    // If this was a new self-contained question, update the conversation's
+    // focusTopic so follow-ups inherit it. Greetings/permission/clarification
+    // keep the previous focusTopic.
+    // (Pre-stream update already done above for normal messages with focusTopic)
 
   } catch (error) {
     if (!res.headersSent) {
@@ -217,7 +295,7 @@ router.post('/ask', authenticate, authorize('student'), upload.single('file'), a
     }
   }
 });
-router.get('/history', authenticate, authorize('student'), validateQuery(z.object({
+router.get('/history', authorize('student'), validateQuery(z.object({
   subject: z.string().optional().or(z.literal('')),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(50).default(20),
@@ -250,7 +328,7 @@ router.get('/history', authenticate, authorize('student'), validateQuery(z.objec
   }
 });
 
-router.get('/history/:id', authenticate, authorize('student'), async (req, res, next) => {
+router.get('/history/:id', authorize('student'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
   try {
     const conversation = await Conversation.findOne({ _id: req.params.id, studentId: req.user._id }).lean();
     if (!conversation) {
@@ -262,13 +340,23 @@ router.get('/history/:id', authenticate, authorize('student'), async (req, res, 
   }
 });
 
-router.get('/history/:id/messages', authenticate, authorize('student'), validateQuery(z.object({
+router.get('/history/:id/messages', authorize('student'), validateParams(z.object({ id: objectIdSchema })), validateQuery(z.object({
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(100).default(50),
   before: z.string().optional(),
 })), async (req, res, next) => {
   try {
     const { page, limit, before } = req.query;
+
+    // Object-level authorization: only the owning student may read messages.
+    const ownedConversation = await Conversation.exists({
+      _id: req.params.id,
+      studentId: req.user._id,
+    });
+    if (!ownedConversation) {
+      throw new AppError('Conversation not found', 404);
+    }
+
     const result = await getConversationMessages(req.params.id, { page, limit, before });
     res.json(result);
   } catch (error) {
@@ -276,7 +364,7 @@ router.get('/history/:id/messages', authenticate, authorize('student'), validate
   }
 });
 
-router.delete('/history/:id', authenticate, authorize('student'), async (req, res, next) => {
+router.delete('/history/:id', authorize('student'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
   try {
     const result = await Conversation.findOneAndDelete({ _id: req.params.id, studentId: req.user._id });
     if (!result) {
@@ -288,7 +376,7 @@ router.delete('/history/:id', authenticate, authorize('student'), async (req, re
   }
 });
 
-router.post('/web-search', authenticate, authorize('student'), validate(z.object({
+router.post('/web-search', authorize('student'), validate(z.object({
   question: z.string().min(1).max(2000),
   subject: z.string().min(1),
 })), async (req, res, next) => {
@@ -362,7 +450,7 @@ router.post('/web-search', authenticate, authorize('student'), validate(z.object
   }
 });
 
-router.post('/confirm-web-search', authenticate, authorize('student'), validate(z.object({
+router.post('/confirm-web-search', authorize('student'), validate(z.object({
   question: z.string().min(1).max(2000),
   subject: z.string().min(1),
   conversationId: z.string().optional(),
@@ -371,8 +459,13 @@ router.post('/confirm-web-search', authenticate, authorize('student'), validate(
     const { question, subject, conversationId } = req.body;
     const studentId = req.user._id;
 
-    if (!req.user.subjects.includes(subject)) {
-      throw new AppError('You are not enrolled in this subject', 403);
+    // Allow subjects that student is enrolled in OR subjects that have teachers
+    const studentSubjects = req.user.subjects || [];
+    if (!studentSubjects.includes(subject)) {
+      const teacherWithSubject = await User.findOne({ role: 'teacher', subjects: subject });
+      if (!teacherWithSubject) {
+        throw new AppError('Subject not available', 403);
+      }
     }
 
     const student = await User.findById(studentId).lean();
@@ -385,13 +478,27 @@ router.post('/confirm-web-search', authenticate, authorize('student'), validate(
       semester: student?.semester || '1',
     };
 
+    // Resolve or create conversation before streaming
+    const { conversation, isNew } = await resolveConversation(studentId, subject, conversationId);
+    const activeConversationId = conversation._id.toString();
+    
+    console.log('[ConfirmWebSearch] Conversation resolved:', { id: activeConversationId, isNew });
+
     const searchResults = await webSearch(question, studentProfile);
 
     if (searchResults.length === 0) {
-      return res.json({
-        answer: "I couldn't find relevant information on the web for your question.",
-        sources: [],
-      });
+      // Still return the conversation id even for no results
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ type: 'conversationId', id: activeConversationId })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'content', content: "I couldn't find relevant information on the web for your question." })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
     }
 
     const stream = await callWebSearchLLM(question, searchResults, studentProfile);
@@ -402,6 +509,9 @@ router.post('/confirm-web-search', authenticate, authorize('student'), validate(
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Accel-Buffering', 'no');
     res.flushHeaders();
+
+    // Emit conversationId first
+    res.write(`data: ${JSON.stringify({ type: 'conversationId', id: activeConversationId })}\n\n`);
 
     // Emit web search status
     res.write(`data: ${JSON.stringify({ type: 'status', status: 'Searching the web...', stage: 'webSearch' })}\n\n`);
@@ -438,6 +548,7 @@ router.post('/confirm-web-search', authenticate, authorize('student'), validate(
         citations: [],
         attachments: [],
         timestamp: new Date(),
+        kind: 'normal',
       };
 
       const assistantMessage = {
@@ -446,15 +557,19 @@ router.post('/confirm-web-search', authenticate, authorize('student'), validate(
         citations: [],
         webSources: searchResults.map(r => ({ title: r.title, url: r.url })),
         timestamp: new Date(),
+        kind: 'normal',
       };
 
+      // Get existing messages from the resolved conversation
+      const existingMessages = conversation.messages || [];
+      
       const messages = [
-        ...(await getConversationMessages(conversationId)),
+        ...existingMessages,
         userMessage,
         assistantMessage,
       ];
 
-      await saveConversation(studentId, subject, messages, conversationId, {
+      await saveConversation(studentId, subject, messages, activeConversationId, {
         triggerSummarization: true,
         triggerMemoryExtraction: true,
       });

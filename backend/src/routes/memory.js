@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import express from 'express';
 import { Memory, User } from '../models/index.js';
-import { authenticate, authorize, validate, validateQuery, AppError } from '../middleware/index.js';
+import { requireAuth, authorize, validate, validateQuery, AppError } from '../middleware/index.js';
 import {
   getAllMemories,
   createExplicitMemory,
@@ -14,6 +14,8 @@ import {
 } from '../services/memoryManager.js';
 
 const router = express.Router();
+
+router.use(requireAuth);
 
 const createMemorySchema = z.object({
   content: z.string().min(1).max(2000),
@@ -39,7 +41,7 @@ const queryMemorySchema = z.object({
  * GET /api/memory
  * Get all memories for the authenticated student
  */
-router.get('/', authenticate, authorize('student'), async (req, res, next) => {
+router.get('/', authorize('student'), async (req, res, next) => {
   try {
     const { includeInactive, category } = req.query;
     const memories = await getAllMemories(req.user._id, {
@@ -61,7 +63,7 @@ router.get('/', authenticate, authorize('student'), async (req, res, next) => {
  * GET /api/memory/relevant
  * Get memories relevant to a query
  */
-router.get('/relevant', authenticate, authorize('student'), validateQuery(queryMemorySchema), async (req, res, next) => {
+router.get('/relevant', authorize('student'), validateQuery(queryMemorySchema), async (req, res, next) => {
   try {
     const { query, limit, categories, minConfidence } = req.query;
     const memories = await getRelevantMemories(req.user._id, query || '', {
@@ -79,7 +81,7 @@ router.get('/relevant', authenticate, authorize('student'), validateQuery(queryM
  * POST /api/memory
  * Create a new explicit memory
  */
-router.post('/', authenticate, authorize('student'), validate(createMemorySchema), async (req, res, next) => {
+router.post('/', authorize('student'), validate(createMemorySchema), async (req, res, next) => {
   try {
     const { content, category, confidence } = req.body;
     const memory = await createExplicitMemory(req.user._id, { content, category, confidence });
@@ -96,7 +98,7 @@ router.post('/', authenticate, authorize('student'), validate(createMemorySchema
  * PATCH /api/memory/:id
  * Update a memory
  */
-router.patch('/:id', authenticate, authorize('student'), validate(updateMemorySchema), async (req, res, next) => {
+router.patch('/:id', authorize('student'), validate(updateMemorySchema), async (req, res, next) => {
   try {
     const memory = await updateMemory(req.user._id, req.params.id, req.body);
     if (!memory) {
@@ -115,7 +117,7 @@ router.patch('/:id', authenticate, authorize('student'), validate(updateMemorySc
  * DELETE /api/memory/:id
  * Delete a memory
  */
-router.delete('/:id', authenticate, authorize('student'), async (req, res, next) => {
+router.delete('/:id', authorize('student'), async (req, res, next) => {
   try {
     await deleteMemory(req.user._id, req.params.id);
     res.json({ success: true });
@@ -131,7 +133,7 @@ router.delete('/:id', authenticate, authorize('student'), async (req, res, next)
  * DELETE /api/memory
  * Clear all memories for the authenticated student
  */
-router.delete('/', authenticate, authorize('student'), validate(z.object({
+router.delete('/', authorize('student'), validate(z.object({
   confirm: z.boolean().refine(v => v === true, 'Confirmation required'),
 })), async (req, res, next) => {
   try {
@@ -146,7 +148,7 @@ router.delete('/', authenticate, authorize('student'), validate(z.object({
  * PATCH /api/memory/toggle
  * Enable/disable memory for the student
  */
-router.patch('/toggle', authenticate, authorize('student'), validate(z.object({
+router.patch('/toggle', authorize('student'), validate(z.object({
   enabled: z.boolean(),
 })), async (req, res, next) => {
   try {
@@ -162,7 +164,7 @@ router.patch('/toggle', authenticate, authorize('student'), validate(z.object({
  * GET /api/memory/categories
  * Get available memory categories
  */
-router.get('/categories', authenticate, authorize('student'), (req, res) => {
+router.get('/categories', authorize('student'), (req, res) => {
   res.json({ categories: MEMORY_CATEGORIES });
 });
 

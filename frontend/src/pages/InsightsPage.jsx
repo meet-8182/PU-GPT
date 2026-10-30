@@ -139,7 +139,7 @@ export function InsightsPage() {
                   <div key={item.topic} className="flex items-center gap-3">
                     <span className="w-6 text-center text-sm font-medium text-chalk/50">{index + 1}</span>
                     <div className="flex-1">
-                      <p className="font-medium text-chalk capitalize">{item.topic}</p>
+                      <p className="font-medium text-chalk">{item.topic}</p>
                       <div className="h-2 bg-rule-line rounded-full overflow-hidden">
                         <div 
                           className="h-full bg-amber-chalk" 
@@ -202,13 +202,6 @@ export function InsightsPage() {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
-              <div className="w-10 h-10 bg-amber-chalk/10 rounded-lg flex items-center justify-center mb-2">
-                <AlertCircle className="w-5 h-5 text-amber-chalk" />
-              </div>
-              <p className="font-medium text-chalk">Review Flagged</p>
-              <p className="text-sm text-chalk/60">Check unanswered questions</p>
-            </button>
-            <button className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
               <div className="w-10 h-10 bg-sage/10 rounded-lg flex items-center justify-center mb-2">
                 <BookOpen className="w-5 h-5 text-sage" />
               </div>
@@ -221,6 +214,13 @@ export function InsightsPage() {
               </div>
               <p className="font-medium text-chalk">Trending Up</p>
               <p className="text-sm text-chalk/60">Fastest growing topics</p>
+            </button>
+            <button className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
+              <div className="w-10 h-10 bg-amber-chalk/10 rounded-lg flex items-center justify-center mb-2">
+                <Users className="w-5 h-5 text-amber-chalk" />
+              </div>
+              <p className="font-medium text-chalk">Student Activity</p>
+              <p className="text-sm text-chalk/60">View engagement trends</p>
             </button>
           </div>
         </CardContent>

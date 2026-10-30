@@ -2,15 +2,29 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config/index.js';
 import { User } from '../models/index.js';
 
-export const authenticate = async (req, res, next) => {
+const BEARER_PATTERN = /^Bearer\s+(\S+)$/i;
+
+/**
+ * Authentication middleware. Exported as both `requireAuth` (preferred, used by
+ * the routers so the auth requirement is explicit at every mount point) and
+ * `authenticate` for backwards compatibility.
+ */
+export const requireAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
+    const match = typeof authHeader === 'string' ? authHeader.match(BEARER_PATTERN) : null;
+
+    if (!match) {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    const token = authHeader.split(' ')[1];
-    const decoded = jwt.verify(token, config.jwtSecret);
+    const decoded = jwt.verify(match[1], config.jwtSecret, {
+      algorithms: ['HS256'],
+    });
+
+    if (!decoded?.userId || typeof decoded.userId !== 'string') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
 
     const user = await User.findById(decoded.userId).select('-passwordHash');
     if (!user) {
@@ -26,9 +40,11 @@ export const authenticate = async (req, res, next) => {
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({ error: 'Invalid token' });
     }
-    return res.status(500).json({ error: 'Authentication error' });
+    return next(error);
   }
 };
+
+export const authenticate = requireAuth;
 
 export const authorize = (...roles) => {
   return (req, res, next) => {
@@ -43,5 +59,8 @@ export const authorize = (...roles) => {
 };
 
 export const generateToken = (userId) => {
-  return jwt.sign({ userId }, config.jwtSecret, { expiresIn: config.jwtExpiresIn });
+  return jwt.sign({ userId: String(userId) }, config.jwtSecret, {
+    algorithm: 'HS256',
+    expiresIn: config.jwtExpiresIn,
+  });
 };

@@ -1,5 +1,13 @@
 import { ZodError } from 'zod';
 
+const validationError = (res, error) => res.status(400).json({
+  error: 'Validation failed',
+  details: error.errors.map(e => ({
+    field: e.path.join('.'),
+    message: e.message,
+  })),
+});
+
 export const validate = (schema) => {
   return (req, res, next) => {
     try {
@@ -7,13 +15,7 @@ export const validate = (schema) => {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        return res.status(400).json({
-          error: 'Validation failed',
-          details: error.errors.map(e => ({
-            field: e.path.join('.'),
-            message: e.message,
-          })),
-        });
+        return validationError(res, error);
       }
       next(error);
     }
@@ -27,13 +29,21 @@ export const validateQuery = (schema) => {
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        return res.status(400).json({
-          error: 'Validation failed',
-          details: error.errors.map(e => ({
-            field: e.path.join('.'),
-            message: e.message,
-          })),
-        });
+        return validationError(res, error);
+      }
+      next(error);
+    }
+  };
+};
+
+export const validateParams = (schema) => {
+  return (req, res, next) => {
+    try {
+      req.params = schema.parse(req.params);
+      next();
+    } catch (error) {
+      if (error instanceof ZodError) {
+        return validationError(res, error);
       }
       next(error);
     }
