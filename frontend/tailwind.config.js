@@ -8,20 +8,32 @@ export default {
   theme: {
     extend: {
       colors: {
-        chalkboard: '#1E2B24',
-        chalk: '#EDEDE3',
-        'amber-chalk': '#E8B84B',
-        'rule-line': '#3A4A40',
-        sage: '#7FA88F',
-        rust: '#C1694F',
-        // Light mode
-        'paper-bg': '#F3F1E9',
-        'ink-dark': '#20241F',
+        // Legacy tokens now resolve through the PU palette CSS variables so
+        // every screen (student, teacher, admin) follows the same theme as Ask.
+        chalkboard: 'rgb(var(--pu-canvas-rgb) / <alpha-value>)',
+        chalk: 'rgb(var(--pu-text-rgb) / <alpha-value>)',
+        'amber-chalk': 'rgb(var(--pu-accent-rgb) / <alpha-value>)',
+        'rule-line': 'rgb(var(--pu-line-rgb) / <alpha-value>)',
+        sage: 'rgb(var(--pu-sage-rgb) / <alpha-value>)',
+        rust: 'rgb(var(--pu-danger-rgb) / <alpha-value>)',
+        // Light mode aliases (kept for existing class names)
+        'paper-bg': 'rgb(var(--pu-canvas-rgb) / <alpha-value>)',
+        'ink-dark': 'rgb(var(--pu-text-rgb) / <alpha-value>)',
+        // PU-GPT Ask redesign (driven by CSS variables in globals.css)
+        'pu-canvas': 'var(--pu-canvas)',
+        'pu-panel': 'var(--pu-panel)',
+        'pu-accent': 'var(--pu-accent)',
+        'pu-cream': 'var(--pu-cream)',
+        'pu-pill': 'var(--pu-pill)',
+        'pu-composer': 'var(--pu-composer)',
+        'pu-text': 'var(--pu-text)',
+        'pu-surface': 'var(--pu-surface)',
       },
       fontFamily: {
         display: ['"Source Serif 4"', 'Lora', 'Georgia', 'serif'],
         body: ['Inter', 'IBM Plex Sans', 'system-ui', 'sans-serif'],
         mono: ['"IBM Plex Mono"', 'Menlo', 'Monaco', 'monospace'],
+        poppins: ['Poppins', 'Inter', 'system-ui', 'sans-serif'],
       },
       animation: {
         'fade-in': 'fadeIn 0.3s ease-out',

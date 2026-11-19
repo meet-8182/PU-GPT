@@ -94,33 +94,49 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
   };
 
   return (
-    <aside className={`fixed left-0 top-0 h-full bg-rule-line/20 border-r border-rule-line transition-all duration-300 z-40 flex flex-col ${collapsed ? 'w-16' : 'w-64'}`}>
-      <div className="flex items-center justify-between h-16 px-4 border-b border-rule-line flex-shrink-0">
-        {!collapsed && (
-          <NavLink to={isAdmin ? '/admin/dashboard' : isTeacher ? '/library' : '/ask'} className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-amber-chalk rounded-lg flex items-center justify-center">
-              <MessageSquare className="w-5 h-5 text-chalkboard" />
-            </div>
+    <aside className={`fixed left-0 top-0 h-full bg-pu-panel border-r border-black/10 transition-all duration-300 z-40 flex flex-col ${collapsed ? 'w-16' : 'w-64'}`}>
+      <div className={`flex items-center justify-between h-16 ${collapsed ? 'px-1' : 'px-4'} border-b border-black/10 flex-shrink-0`}>
+        <NavLink
+          to={isAdmin ? '/admin/dashboard' : isTeacher ? '/library' : '/ask'}
+          className={collapsed ? 'flex items-center justify-center' : 'flex items-center gap-2'}
+          aria-label="PU-GPT home"
+        >
+          <div className={`${collapsed ? 'w-7 h-7' : 'w-8 h-8'} bg-pu-accent rounded-lg flex items-center justify-center`}>
+            <MessageSquare className={`${collapsed ? 'w-4 h-4' : 'w-5 h-5'} text-pu-cream`} />
+          </div>
+          {!collapsed && (
             <span className="font-display font-medium text-lg text-chalk">PU-GPT</span>
-          </NavLink>
-        )}
+          )}
+        </NavLink>
         <button
           onClick={() => onCollapseChange?.(!collapsed)}
-          className="p-2 text-chalk/50 hover:text-chalk hover:bg-rule-line rounded-lg transition-colors"
+          className={`${collapsed ? 'p-1' : 'p-2'} text-chalk/50 hover:text-chalk hover:bg-black/10 rounded-lg transition-colors`}
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >
-          {collapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-5 h-5" />}
         </button>
       </div>
 
       {/* Navigation area - scrollable */}
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1" role="navigation" aria-label="Main navigation">
         <div className="flex flex-col space-y-1">
+          {collapsed && isStudent && (
+            <button
+              type="button"
+              onClick={handleNewChat}
+              className="flex items-center justify-center w-10 h-10 mx-auto mb-1 rounded-lg text-chalk/70 hover:text-chalk hover:bg-black/10 transition-colors"
+              aria-label="Start new chat"
+              title="New Chat"
+            >
+              <Plus className="w-5 h-5" aria-hidden="true" />
+            </button>
+          )}
+
           {/* New Chat - at the top for students */}
           {!collapsed && isStudent && (
             <button
               onClick={handleNewChat}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-chalk/70 hover:text-amber-chalk hover:bg-amber-chalk/10 w-full"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 text-chalk/70 hover:text-chalk hover:bg-black/10 w-full"
               aria-label="Start new chat"
               title="New Chat"
             >
@@ -143,8 +159,8 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
                     onClick={handleHistoryArrowClick}
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 w-full ${
                       isActive
-                        ? 'bg-amber-chalk/15 text-amber-chalk border-l-2 border-amber-chalk'
-                        : 'text-chalk/70 hover:text-chalk hover:bg-rule-line/50'
+                        ? 'bg-pu-accent text-pu-cream border-l-2 border-pu-cream/40'
+                        : 'text-chalk/70 hover:text-chalk hover:bg-black/10'
                     }`}
                     aria-expanded={historyExpanded}
                     aria-controls="history-dropdown"
@@ -196,8 +212,8 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
                                   role="menuitem"
                                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors w-full text-left ${
                                     isActiveConv
-                                      ? 'bg-amber-chalk/15 text-amber-chalk'
-                                      : 'text-chalk/70 hover:text-chalk hover:bg-rule-line/50'
+                                      ? 'bg-pu-accent text-pu-cream'
+                                      : 'text-chalk/70 hover:text-chalk hover:bg-black/10'
                                   }`}
                                   title={conv.title || 'Untitled conversation'}
                                 >
@@ -214,7 +230,7 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
                               navigate('/history');
                               setHistoryExpanded(false);
                             }}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-chalk/60 hover:text-amber-chalk hover:bg-amber-chalk/10 transition-colors border-t border-rule-line mt-1 w-full text-left"
+                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-chalk/60 hover:text-chalk hover:bg-black/10 transition-colors border-t border-black/10 mt-1 w-full text-left"
                             role="menuitem"
                           >
                             <span className="flex-1 text-left">View all history</span>
@@ -235,8 +251,8 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
                 to={item.path}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
                   isActive
-                    ? 'bg-amber-chalk/15 text-amber-chalk border-l-2 border-amber-chalk'
-                    : 'text-chalk/70 hover:text-chalk hover:bg-rule-line/50'
+                    ? 'bg-pu-accent text-pu-cream border-l-2 border-pu-cream/40'
+                    : 'text-chalk/70 hover:text-chalk hover:bg-black/10'
                 } ${collapsed ? 'justify-center' : ''}`}
                 aria-current={isActive ? 'page' : undefined}
                 title={collapsed ? item.label : undefined}
@@ -250,13 +266,13 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
       </nav>
 
       {/* Account section - anchored to bottom */}
-      <div className="p-4 border-t border-rule-line flex-shrink-0">
+      <div className="p-4 border-t border-black/10 flex-shrink-0">
         {!collapsed && (
           <div className="mb-3 px-3">
             <p className="text-xs font-medium text-chalk/50 uppercase tracking-wider mb-2">Account</p>
-            <div className="flex items-center gap-3 p-2 rounded-lg bg-rule-line/50">
-              <div className="w-8 h-8 bg-amber-chalk/20 rounded-full flex items-center justify-center">
-                <span className="text-amber-chalk font-medium text-sm">
+            <div className="flex items-center gap-3 p-2 rounded-lg bg-black/10">
+              <div className="w-8 h-8 bg-pu-cream rounded-full flex items-center justify-center">
+                <span className="text-[#1f3529] font-medium text-sm">
                   {user?.name?.charAt(0).toUpperCase()}
                 </span>
               </div>

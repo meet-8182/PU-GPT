@@ -198,7 +198,7 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
       let routeChunkCount = 0;
       for await (const chunk of result.stream) {
         routeChunkCount++;
-        console.log(`[Route] Chunk #${routeChunkCount}: type=${chunk.type}`, chunk.type === 'content' ? `content_len=${chunk.content?.length || 0}` : chunk.type === 'status' ? `status=${chunk.status}` : chunk.type === 'error' ? `error=${chunk.message}` : '');
+        // console.log(`[Route] Chunk #${routeChunkCount}: type=${chunk.type}`, chunk.type === 'content' ? `content_len=${chunk.content?.length || 0}` : chunk.type === 'status' ? `status=${chunk.status}` : chunk.type === 'error' ? `error=${chunk.message}` : '');
         // Send all event types as SSE data
         res.write(`data: ${JSON.stringify(chunk)}\n\n`);
 

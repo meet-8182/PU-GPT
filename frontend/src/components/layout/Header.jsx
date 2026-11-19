@@ -1,5 +1,5 @@
 import { useTheme } from '@/context/ThemeContext';
-import { Sun, Moon, Menu } from 'lucide-react';
+import { Sun, Moon } from 'lucide-react';
 
 export function Header({ sidebarCollapsed = false }) {
   const { isDark, toggleTheme } = useTheme();

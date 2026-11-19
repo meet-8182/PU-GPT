@@ -109,7 +109,7 @@ async function startServer() {
     // In-process image queue is initialized on first use (lazy)
     console.log('In-process image generation queue ready (concurrency: 1)');
 
-    const server = app.listen(config.port, '0.0.0.0', () => {
+    const server = app.listen({ port: config.port, host: '0.0.0.0' }, () => {
       console.log(`Server running on port ${config.port}`);
       console.log('Server address:', server.address());
     });

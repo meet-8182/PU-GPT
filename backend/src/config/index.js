@@ -24,7 +24,7 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
   chromaUrl: process.env.CHROMA_URL,
-  ollamaHost: process.env.OLLAMA_URL || 'http://127.0.0.1:11434',
+  ollamaHost: process.env.OLLAMA_URL,
   uploadDir: process.env.UPLOAD_DIR || './uploads',
   maxFileSize: parseInt(process.env.MAX_FILE_SIZE) || 10485760, // 10MB
 
@@ -69,6 +69,14 @@ export const config = {
   comfyuiBaseUrl: process.env.COMFYUI_BASE_URL || 'http://127.0.0.1:8188',
   comfyuiTimeoutMs: parseInt(process.env.COMFYUI_TIMEOUT_MS) || 300000, // 5 min for generation
   comfyuiWorkflowPath: process.env.COMFYUI_WORKFLOW_PATH || './comfyui-workflows/z-image-turbo.json',
+
+  // Speech-to-Text (STT)
+  sttProvider: process.env.STT_PROVIDER || 'whisper-cpp', // whisper-cpp | faster-whisper | whisper-api | assemblyai
+  whisperCppPath: process.env.WHISPER_CPP_PATH, // path to whisper-cli binary
+  whisperModelPath: process.env.WHISPER_MODEL_PATH, // path to ggml-base.en.bin (or other model)
+  fasterWhisperScript: process.env.FASTER_WHISPER_SCRIPT, // path to Python script
+  openaiApiKey: process.env.OPENAI_API_KEY, // for whisper-api
+  assemblyAiApiKey: process.env.ASSEMBLYAI_API_KEY, // for assemblyai
 
   // Rate limits (per authenticated user)
   rateLimitOcrPerMin: parseInt(process.env.RATE_LIMIT_OCR_PER_MIN) || 30,

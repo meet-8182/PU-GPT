@@ -187,7 +187,7 @@ export function FileUpload({
 
 function Button({ children, type = 'button', disabled, className = '', ...props }) {
   const baseClasses = 'inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-body font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-chalk focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
-  const variantClasses = 'bg-amber-chalk text-chalkboard hover:bg-amber-chalk/90 active:bg-amber-chalk';
+  const variantClasses = 'bg-amber-chalk text-pu-cream hover:bg-amber-chalk/90 active:bg-amber-chalk';
   
   return (
     <button

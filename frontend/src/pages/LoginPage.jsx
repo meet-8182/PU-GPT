@@ -35,8 +35,15 @@ export function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      await login(formData.email, formData.password);
-      navigate('/ask');
+      const user = await login(formData.email, formData.password);
+      // Redirect based on user role
+      if (user?.role === 'admin') {
+        navigate('/admin/dashboard');
+      } else if (user?.role === 'teacher') {
+        navigate('/library');
+      } else {
+        navigate('/ask');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Please try again.');
     } finally {
@@ -52,7 +59,7 @@ export function LoginPage() {
         <div className="text-center mb-8">
           <NavLink to="/login" className="inline-flex items-center gap-2 mb-6">
             <div className="w-12 h-12 bg-amber-chalk rounded-xl flex items-center justify-center">
-              <BookOpen className="w-7 h-7 text-chalkboard" />
+              <BookOpen className="w-7 h-7 text-pu-cream" />
             </div>
             <span className="font-display font-medium text-2xl text-chalk">PU-GPT</span>
           </NavLink>

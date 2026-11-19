@@ -11,17 +11,17 @@ const codeTheme = {
   ...vscDarkPlus,
   plain: {
     ...vscDarkPlusPlain,
-    backgroundColor: '#1E2B24',
-    color: '#EDEDE3',
+    backgroundColor: '#2C2C2C',
+    color: '#F2F0D8',
   },
   styles: [
     ...vscDarkPlusStyles,
-    { types: ['keyword', 'operator'], style: { color: '#E8B84B', fontWeight: 'bold' } },
-    { types: ['string', 'regex'], style: { color: '#7FA88F' } },
-    { types: ['number', 'constant'], style: { color: '#E8B84B' } },
-    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#7FA88F', fontStyle: 'italic' } },
-    { types: ['punctuation', 'operator'], style: { color: '#E8B84B' } },
-    { types: ['namespace'], style: { color: '#E8B84B' } },
+    { types: ['keyword', 'operator'], style: { color: '#8FD3B4', fontWeight: 'bold' } },
+    { types: ['string', 'regex'], style: { color: '#A9C7A9' } },
+    { types: ['number', 'constant'], style: { color: '#8FD3B4' } },
+    { types: ['comment', 'prolog', 'doctype', 'cdata'], style: { color: '#8BA895', fontStyle: 'italic' } },
+    { types: ['punctuation', 'operator'], style: { color: '#8FD3B4' } },
+    { types: ['namespace'], style: { color: '#8FD3B4' } },
   ],
 };
 
@@ -61,10 +61,10 @@ function CodeBlock({ children, className, ...props }) {
         }}
         showLineNumbers={true}
         lineNumberStyle={{
-          color: '#7FA88F',
+          color: '#8BA895',
           opacity: 0.4,
           paddingRight: '1rem',
-          borderRight: '1px solid #3A4A40',
+          borderRight: '1px solid #3F5548',
         }}
         {...props}
       >

@@ -5,6 +5,7 @@ import teacherRoutes from './teacher.js';
 import adminRoutes from './admin.js';
 import imageRoutes from './images.js';
 import memoryRoutes from './memory.js';
+import speechRoutes from './speech.js';
 
 export const setupRoutes = (app) => {
   app.use('/api/auth', authRoutes);
@@ -14,6 +15,7 @@ export const setupRoutes = (app) => {
   app.use('/api/admin', adminRoutes);
   app.use('/api/images', imageRoutes);
   app.use('/api/memory', memoryRoutes);
+  app.use('/api/speech', speechRoutes);
 
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });

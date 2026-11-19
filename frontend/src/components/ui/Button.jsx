@@ -13,7 +13,7 @@ export const Button = forwardRef(({
   const baseClasses = 'inline-flex items-center justify-center gap-2 font-body font-medium rounded-lg transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-chalk focus-visible:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed';
   
   const variants = {
-    primary: 'bg-amber-chalk text-chalkboard hover:bg-amber-chalk/90 active:bg-amber-chalk',
+    primary: 'bg-amber-chalk text-pu-cream hover:bg-amber-chalk/90 active:bg-amber-chalk',
     secondary: 'bg-rule-line text-chalk hover:bg-rule-line/80 active:bg-rule-line',
     ghost: 'bg-transparent text-chalk hover:bg-rule-line active:bg-rule-line/50',
     danger: 'bg-rust text-chalk hover:bg-rust/90 active:bg-rust',
