@@ -52,7 +52,11 @@ export function InsightsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h1 className="font-display font-medium text-2xl text-chalk">Topic Insights</h1>
-          <p className="text-chalk/60">What students are asking about this week</p>
+          <p className="text-chalk/60">
+            {isTeacher && user?.subjects?.length
+              ? `Questions about ${user.subjects.join(', ')}`
+              : 'What students are asking about this week'}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <select

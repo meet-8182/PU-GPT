@@ -210,21 +210,32 @@ router.get('/insights', authorize('teacher', 'admin'), validateQuery(z.object({
     const cutoff = new Date();
     cutoff.setDate(cutoff.getDate() - days);
 
-    const filter = { createdAt: { $gte: cutoff } };
-    if (req.user.role === 'teacher') {
-      filter.subject = { $in: req.user.subjects };
-    }
-    if (subject) filter.subject = subject;
+    const teacherSubjects = req.user.role === 'teacher' ? (req.user.subjects || []) : null;
 
-    // Fetch conversations with messages
-    const conversations = await Conversation.find({ 
+    // A teacher may only inspect their assigned subjects.
+    if (subject && teacherSubjects && !teacherSubjects.includes(subject)) {
+      return next(new AppError('You do not have access to this subject', 403));
+    }
+
+    const conversationFilter = {
       studentId: { $exists: true },
       updatedAt: { $gte: cutoff },
-      ...(subject ? { subject } : {}),
-    }).lean();
+    };
+    if (subject) {
+      conversationFilter.subject = subject;
+    } else if (teacherSubjects) {
+      conversationFilter.subject = { $in: teacherSubjects };
+    }
+
+    // Fetch conversations with messages
+    const conversations = await Conversation.find(conversationFilter).lean();
 
     // Build topic vocabulary for the subject(s)
-    const subjectsToAnalyze = subject ? [subject] : (req.user.role === 'teacher' ? req.user.subjects : [...new Set(conversations.map(c => c.subject).filter(Boolean))]);
+    const subjectsToAnalyze = subject
+      ? [subject]
+      : (teacherSubjects
+        ? teacherSubjects
+        : [...new Set(conversations.map(c => c.subject).filter(Boolean))]);
     
     const vocabularies = new Map();
     for (const subj of subjectsToAnalyze) {
