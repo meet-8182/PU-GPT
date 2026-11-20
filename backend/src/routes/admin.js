@@ -39,7 +39,7 @@ router.get('/debug/health', async (req, res, next) => {
 
     // Test ollama
     console.log('Testing Ollama...');
-    const ollamaRes = await fetch(config.ollamaUrl + '/api/tags');
+    const ollamaRes = await fetch(config.ollamaHost + '/api/tags');
     const ollamaData = await ollamaRes.json();
     console.log('Ollama models:', ollamaData.models?.map(m => m.name) || []);
 
@@ -314,7 +314,7 @@ async function checkChromaHealth() {
 async function checkOllamaHealth() {
   try {
     console.log('Checking Ollama health...');
-    const response = await fetch(`${config.ollamaUrl}/api/tags`);
+    const response = await fetch(`${config.ollamaHost}/api/tags`);
     if (response.ok) {
       const data = await response.json();
       console.log('Ollama models:', data.models?.map(m => m.name) || []);
