@@ -71,7 +71,7 @@ const querySchema = z.object({
   department: z.string().optional().or(z.literal('')),
   subject: z.string().optional().or(z.literal('')),
   semester: z.string().optional().or(z.literal('')),
-  status: z.enum(['processing', 'indexed', 'failed']).optional().or(z.literal('')),
+  status: z.enum(['processing', 'ocr_processing', 'indexed', 'failed', 'needs_reupload']).optional().or(z.literal('')),
   page: z.coerce.number().int().positive().default(1),
   limit: z.coerce.number().int().positive().max(50).default(20),
 }).transform(d => ({
@@ -135,6 +135,105 @@ async function processDocumentWithOCR(documentId, filePath, fileType, subject) {
   }
 }
 
+/**
+ * True when an error is caused by the source file being gone from disk.
+ */
+function isMissingSourceFile(error) {
+  return error?.code === 'ENOENT' || /ENOENT|no such file/i.test(error?.message || '');
+}
+
+/**
+ * Returns the on-disk path of a document's source file, or null when the
+ * document has no downloadable source (e.g. teacher generated content).
+ */
+function resolveSourcePath(document) {
+  if (!document?.fileUrl || document.fileUrl === 'teacher-response') return null;
+  const uploadRoot = path.resolve(config.uploadDir);
+  const filePath = path.resolve(uploadRoot, path.basename(document.fileUrl));
+  if (!filePath.startsWith(uploadRoot)) return null;
+  return filePath;
+}
+
+async function sourceFileExists(document) {
+  const filePath = resolveSourcePath(document);
+  if (!filePath) return false;
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Process a document and keep its status consistent.
+ * Missing source files are marked `needs_reupload` so a teacher can act on it
+ * instead of the document being stuck in `processing` forever.
+ */
+export async function runDocumentProcessing(documentId) {
+  const document = await Document.findById(documentId);
+  if (!document) return;
+
+  const filePath = resolveSourcePath(document);
+
+  try {
+    if (!filePath) {
+      throw new Error('Original source file is not available for this document');
+    }
+    if (!(await sourceFileExists(document))) {
+      const err = new Error('Original source file is missing from the uploads folder');
+      err.code = 'ENOENT';
+      throw err;
+    }
+
+    // Remove any chunks left behind by an interrupted run so re-indexing
+    // does not collide with existing vector IDs.
+    try {
+      await deleteDocumentChunks(documentId);
+    } catch (cleanupError) {
+      console.warn(`Could not clear old chunks for ${documentId}:`, cleanupError.message);
+    }
+
+    if (document.needsOCR) {
+      await processDocumentWithOCR(documentId, filePath, document.fileType, document.subject);
+    } else {
+      await processDocument(documentId);
+    }
+  } catch (error) {
+    const missing = isMissingSourceFile(error);
+    await Document.findByIdAndUpdate(documentId, {
+      status: missing ? 'needs_reupload' : 'failed',
+      errorMessage: missing
+        ? 'Original source file is missing. Please upload this document again.'
+        : (error.message || 'Processing failed'),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Re-queue documents left behind by a crash/restart. Uploads are processed in
+ * memory, so without this a restart leaves documents in `processing` forever.
+ */
+export async function recoverPendingDocuments() {
+  const pending = await Document.find({
+    status: { $in: ['processing', 'ocr_processing'] },
+    fileUrl: { $ne: 'teacher-response' },
+  }).select('_id title');
+
+  if (pending.length === 0) return;
+
+  console.log(`[Recovery] Re-queueing ${pending.length} unfinished document(s)`);
+  for (const doc of pending) {
+    try {
+      await runDocumentProcessing(doc._id);
+      console.log(`[Recovery] Finished: ${doc.title}`);
+    } catch (error) {
+      console.error(`[Recovery] Failed: ${doc.title} - ${error.message}`);
+    }
+  }
+}
+
 router.post('/upload', authorize('teacher', 'admin'), docUpload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
@@ -166,35 +265,31 @@ router.post('/upload', authorize('teacher', 'admin'), docUpload.single('file'), 
     const needsOCR = fileType.startsWith('image/') ||
       (fileType === 'application/pdf' && await isScannedPDF(filePath));
 
-    const document = await Document.create({
-      title: originalName,
-      uploadedBy: req.user._id,
-      college,
-      department,
-      subject,
-      semester,
-      unit,
-      fileUrl: filePath,
-      fileType,
-      fileSize: req.file.size,
-      status: needsOCR ? 'ocr_processing' : 'processing',
-      needsOCR: needsOCR,
-    });
-
-    // Process asynchronously
-    const processPromise = needsOCR
-      ? processDocumentWithOCR(document._id, filePath, fileType, subject)
-      : processDocument(document._id);
-
-    processPromise
-      .then(() => console.log('Document processed:', document._id))
-      .catch(async (err) => {
-        console.error('Document processing failed:', err);
-        await Document.findByIdAndUpdate(document._id, {
-          status: 'failed',
-          errorMessage: err.message || 'Processing failed',
-        });
+    let document;
+    try {
+      document = await Document.create({
+        title: originalName,
+        uploadedBy: req.user._id,
+        college,
+        department,
+        subject,
+        semester,
+        unit,
+        fileUrl: filePath,
+        fileType,
+        fileSize: req.file.size,
+        status: needsOCR ? 'ocr_processing' : 'processing',
+        needsOCR: needsOCR,
       });
+    } catch (error) {
+      await safeDeleteFile(filePath);
+      throw error;
+    }
+
+    // Process asynchronously. runDocumentProcessing also records failures.
+    runDocumentProcessing(document._id)
+      .then(() => console.log('Document processed:', document._id))
+      .catch((err) => console.error('Document processing failed:', err.message));
 
     res.status(201).json({
       document: {
@@ -326,6 +421,9 @@ router.get('/', authorize('teacher', 'admin'), validateQuery(querySchema), async
         unit: d.unit,
         status: d.status,
         needsOCR: d.needsOCR,
+        fileType: d.fileType,
+        ocrPages: d.ocrPages,
+        ocrDurationMs: d.ocrDurationMs,
         chunkCount: d.chunkCount,
         errorMessage: d.errorMessage,
         uploadedAt: d.uploadedAt,
@@ -348,6 +446,77 @@ router.get('/subjects', authorize('teacher', 'admin'), async (req, res, next) =>
     const filter = req.user.role === 'teacher' ? { uploadedBy: req.user._id } : {};
     const subjects = await Document.distinct('subject', filter);
     res.json({ subjects });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Download the original uploaded file.
+router.get('/:id/download', authorize('teacher', 'admin'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
+  try {
+    const filter = { _id: req.params.id };
+    if (req.user.role === 'teacher') {
+      filter.uploadedBy = req.user._id;
+    }
+
+    const document = await Document.findOne(filter);
+    if (!document) {
+      return next(new AppError('Document not found', 404));
+    }
+
+    const filePath = resolveSourcePath(document);
+    if (!filePath || !(await sourceFileExists(document))) {
+      await Document.findByIdAndUpdate(document._id, {
+        status: 'needs_reupload',
+        errorMessage: 'Original source file is missing. Please upload this document again.',
+      });
+      return next(new AppError('Original source file is missing. Please upload this document again.', 410));
+    }
+
+    const downloadName = document.title || path.basename(filePath);
+    return res.download(filePath, downloadName);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Retry processing for a failed / interrupted upload.
+router.post('/:id/reprocess', authorize('teacher', 'admin'), validateParams(z.object({ id: objectIdSchema })), async (req, res, next) => {
+  try {
+    const filter = { _id: req.params.id };
+    if (req.user.role === 'teacher') {
+      filter.uploadedBy = req.user._id;
+    }
+
+    const document = await Document.findOne(filter);
+    if (!document) {
+      return next(new AppError('Document not found', 404));
+    }
+
+    if (document.status === 'indexed') {
+      return res.json({ message: 'Document is already indexed', document: { id: document._id, status: document.status } });
+    }
+
+    if (!(await sourceFileExists(document))) {
+      await Document.findByIdAndUpdate(document._id, {
+        status: 'needs_reupload',
+        errorMessage: 'Original source file is missing. Please upload this document again.',
+      });
+      return next(new AppError('Original source file is missing. Please upload this document again.', 409));
+    }
+
+    await Document.findByIdAndUpdate(document._id, {
+      status: document.needsOCR ? 'ocr_processing' : 'processing',
+      errorMessage: null,
+    });
+
+    runDocumentProcessing(document._id)
+      .catch((err) => console.error('Document reprocessing failed:', err.message));
+
+    return res.status(202).json({
+      message: 'Reprocessing started',
+      document: { id: document._id, status: document.needsOCR ? 'ocr_processing' : 'processing' },
+    });
   } catch (error) {
     next(error);
   }

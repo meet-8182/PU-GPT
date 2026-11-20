@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import { Ollama } from 'ollama';
 import { config, validateConfig } from './config/index.js';
 import { setupRoutes } from './routes/index.js';
+import { recoverPendingDocuments } from './routes/documents.js';
 import { errorHandler } from './middleware/index.js';
 
 const app = express();
@@ -112,6 +113,11 @@ async function startServer() {
     const server = app.listen({ port: config.port, host: '0.0.0.0' }, () => {
       console.log(`Server running on port ${config.port}`);
       console.log('Server address:', server.address());
+
+      // Uploads are processed in-process; re-queue anything a restart interrupted.
+      recoverPendingDocuments().catch((err) => {
+        console.error('[Recovery] Failed to recover pending documents:', err.message);
+      });
     });
 
     // Graceful shutdown

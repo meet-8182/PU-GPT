@@ -34,6 +34,8 @@ export const documentApi = {
   list: (params) => api.get('/documents', { params }),
   subjects: () => api.get('/documents/subjects'),
   delete: (id) => api.delete(`/documents/${id}`),
+  download: (id) => api.get(`/documents/${id}/download`, { responseType: 'blob' }),
+  reprocess: (id) => api.post(`/documents/${id}/reprocess`),
 };
 
 export const chatApi = {

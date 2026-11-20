@@ -30,17 +30,23 @@ function ProtectedRoute({ children, allowedRoles }) {
   if (loading) return <LoadingSpinner />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    return <Navigate to="/ask" replace />;
+    return <Navigate to={homeForRole(user?.role)} replace />;
   }
 
   return children;
 }
 
+function homeForRole(role) {
+  if (role === 'admin') return '/admin/dashboard';
+  if (role === 'teacher') return '/library';
+  return '/ask';
+}
+
 function PublicRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { user, isAuthenticated, loading } = useAuth();
 
   if (loading) return <LoadingSpinner />;
-  if (isAuthenticated) return <Navigate to="/ask" replace />;
+  if (isAuthenticated) return <Navigate to={homeForRole(user?.role)} replace />;
 
   return children;
 }
