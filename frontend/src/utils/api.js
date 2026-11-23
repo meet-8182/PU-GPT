@@ -39,13 +39,7 @@ export const documentApi = {
 };
 
 export const chatApi = {
-  /**
-   * Ask a question - supports both text and image upload
-   * @param {Object} params - { question, subject, conversationId, file }
-   * @param {AbortSignal} signal - Optional abort signal for timeout/cancellation
-   * @returns {ReadableStream} - SSE stream
-   * Note: Web search trigger (leading backslash) is detected by backend
-   */
+  /** Ask a question - supports both text and image upload */
   ask: (params, signal) => {
     const { question, subject, conversationId, file } = params;
     const formData = new FormData();
@@ -54,7 +48,6 @@ export const chatApi = {
     if (conversationId) formData.append('conversationId', conversationId);
     if (file) formData.append('file', file);
     // No isWebSearch flag - backend detects leading backslash
-
     return fetch('/api/chat/ask', {
       method: 'POST',
       headers: {
@@ -103,16 +96,8 @@ export const adminApi = {
 export const guestApi = {
   infoStatus: () => api.get('/public/info-status'),
   feedback: (vote) => api.post('/public/feedback', { vote }),
-  /**
-   * Ask the public assistant. Returns the raw fetch Response so the caller can
-   * read the SSE body. No auth header is sent and nothing is stored server-side.
-   */
-  ask: ({ message, history }, signal) => fetch('/api/public/ask', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, history }),
-    signal,
-  }),
+  /** Ask the public assistant. Returns the raw axios Response so the caller can read the SSE body. No auth header is sent and nothing is stored server-side. */
+  ask: ({ message, history }, signal) => api.post('/public/ask', { message, history }),
 };
 
 export const universityInfoApi = {
