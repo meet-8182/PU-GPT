@@ -19,10 +19,13 @@
     "sonner": "^2.0.8"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.64.1",
     "@vitejs/plugin-react": "^6.1.2",
     "autoprefixer": "^10.4.19",
     "commander": "^12.1.0",
+    "eslint": "^10.15.0",
+    "eslint-plugin-react": "^7.37.5",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "vite": "^8.3.5"

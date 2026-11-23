@@ -17,6 +17,7 @@ import {
   getConversationMessages,
 } from '../services/chat.js';
 import { config } from '../config/index.js';
+import { noteLoggedInGenerationStart, noteLoggedInGenerationEnd } from '../services/guestLimits.js';
 
 const router = express.Router();
 
@@ -195,6 +196,7 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
 
     // Wrap the streaming in a try-catch to handle stream errors
     try {
+      noteLoggedInGenerationStart();
       let routeChunkCount = 0;
       for await (const chunk of result.stream) {
         routeChunkCount++;
@@ -215,6 +217,8 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
         res.write(`data: ${JSON.stringify({ type: 'error', message: streamError.message || 'Stream error' })}\n\n`);
       }
       throw streamError;
+    } finally {
+      noteLoggedInGenerationEnd();
     }
 
     // Extract and emit citations after streaming completes

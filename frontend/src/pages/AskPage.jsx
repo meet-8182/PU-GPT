@@ -102,6 +102,8 @@ export function AskPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const urlSubject = searchParams.get('subject');
+  const urlConversationId = searchParams.get('conversation');
+  const urlIsNewChat = searchParams.get('new') === 'true';
   const [subject, setSubject] = useState(() => urlSubject || '');
   const [question, setQuestion] = useState('');
   const [messages, setMessages] = useState([]);
@@ -134,6 +136,9 @@ export function AskPage() {
   // Track if we're mid-stream and already have a conversationId from the backend
   // This prevents the URL effect from clearing/loading the just-created conversation.
   const sseConversationIdRef = useRef(null);
+  // Guards the one-shot "new chat" reset so it cannot retrigger before the
+  // router commits the cleaned URL (React Router 7 navigations are transitions).
+  const handledNewChatRef = useRef(false);
 
   // Cross-browser speech-to-text (MediaRecorder + backend Whisper, with Web Speech fallback)
   const {
@@ -180,7 +185,7 @@ export function AskPage() {
   }, []);
 
   // Helper to remove pending file - must be defined before loadConversation
-  const removePendingFile = () => {
+  const removePendingFile = useCallback(() => {
     if (pendingFilePreview && pendingFilePreview.startsWith('blob:')) {
       URL.revokeObjectURL(pendingFilePreview);
     }
@@ -188,7 +193,7 @@ export function AskPage() {
     setPendingFilePreview(null);
     setOcrText('');
     setShowOcrPreview(false);
-  };
+  }, [pendingFilePreview]);
 
   // Load conversation from URL parameter
   const loadConversation = useCallback(async (id) => {
@@ -233,12 +238,14 @@ export function AskPage() {
         setError('Conversation not found');
         setMessages([]);
         setConversationId(null);
+        lastLoadedConvIdRef.current = null;
       }
     } catch (err) {
       console.error('Failed to load conversation:', err);
       setError('Failed to load conversation');
       setMessages([]);
       setConversationId(null);
+      lastLoadedConvIdRef.current = null;
     } finally {
       setLoading(false);
     }
@@ -261,8 +268,11 @@ export function AskPage() {
         if (urlSubject && combinedSubjects.includes(urlSubject)) return urlSubject;
         return combinedSubjects[0] || '';
       });
+      // Don't overwrite the subject while opening an existing conversation;
+      // the conversation loader sets the subject that belongs to that chat.
       if (
         combinedSubjects[0] &&
+        !urlConversationId &&
         (!urlSubject || !combinedSubjects.includes(urlSubject))
       ) {
         setSearchParams((prev) => {
@@ -281,7 +291,11 @@ export function AskPage() {
         if (urlSubject && userSubjects.includes(urlSubject)) return urlSubject;
         return userSubjects[0] || '';
       });
-      if (userSubjects[0] && (!urlSubject || !userSubjects.includes(urlSubject))) {
+      if (
+        userSubjects[0] &&
+        !urlConversationId &&
+        (!urlSubject || !userSubjects.includes(urlSubject))
+      ) {
         setSearchParams((prev) => {
           const newParams = new URLSearchParams(prev);
           newParams.set('subject', userSubjects[0]);
@@ -289,20 +303,21 @@ export function AskPage() {
         }, { replace: true });
       }
     }
-  }, [user, urlSubject, setSearchParams]);
+  }, [user, urlSubject, urlConversationId, setSearchParams]);
 
-  // Authentication and subjects loading
+  // Authentication and subjects loading. Subjects only need to be fetched
+  // once; re-running on every URL subject change used to reset the subject
+  // picker while a conversation was loading.
+  const subjectsLoadedRef = useRef(false);
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/login');
       return;
     }
+    if (subjectsLoadedRef.current) return;
+    subjectsLoadedRef.current = true;
     fetchSubjects();
   }, [isAuthenticated, navigate, fetchSubjects]);
-
-  // Extract conversation ID from URL as a primitive for stable dependency
-  const urlConversationId = searchParams.get('conversation');
-  const urlIsNewChat = searchParams.get('new') === 'true';
 
   // Handle URL parameters (new chat, conversation ID)
   useEffect(() => {
@@ -310,12 +325,18 @@ export function AskPage() {
 
     // Check for new chat parameter
     if (urlIsNewChat) {
+      // React Router 7 commits navigations inside a transition, so this effect
+      // can re-run with a stale `?new=true` search before the URL updates.
+      // Without this guard the reset + navigate pair loops forever
+      // ("Maximum update depth exceeded").
+      if (handledNewChatRef.current) return;
+      handledNewChatRef.current = true;
+
       // Clear the new parameter from URL
-      setSearchParams(prev => {
-        const newParams = new URLSearchParams(prev);
-        newParams.delete('new');
-        return newParams;
-      });
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('new');
+      setSearchParams(nextParams, { replace: true });
+
       // Reset conversation state for new chat
       setConversationId(null);
       setMessages([]);
@@ -327,8 +348,12 @@ export function AskPage() {
       setPendingQuery(null);
       removePendingFile();
       sseConversationIdRef.current = null;
+      // Allow the same conversation to be opened again after starting a new chat.
+      lastLoadedConvIdRef.current = null;
       return;
     }
+
+    handledNewChatRef.current = false;
 
     // If we just received a conversationId from SSE, don't reload it from URL.
     // The SSE event is the authoritative source for newly created conversations.
@@ -349,11 +374,13 @@ export function AskPage() {
       setStatus(null);
       setPendingQuery(null);
       removePendingFile();
+      lastLoadedConvIdRef.current = null;
     }
   }, [
     isAuthenticated,
     urlConversationId,
     urlIsNewChat,
+    searchParams,
     setSearchParams,
     loadConversation,
     conversationId,
@@ -361,8 +388,10 @@ export function AskPage() {
   ]);
 
   // Keep the subject in sync when it is changed from the sidebar / drawer.
+  // Never do this while an existing conversation is open: the conversation's
+  // own subject is authoritative for that chat.
   useEffect(() => {
-    if (!isAuthenticated || !urlSubject || urlSubject === subject) return;
+    if (!isAuthenticated || urlConversationId || !urlSubject || urlSubject === subject) return;
 
     setSubject(urlSubject);
     setMessages([]);
@@ -382,6 +411,7 @@ export function AskPage() {
     }, { replace: true });
   }, [
     isAuthenticated,
+    urlConversationId,
     urlSubject,
     subject,
     setSearchParams,
