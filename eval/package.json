@@ -1,5 +1,16 @@
 {
   "dependencies": {
     "commander": "^15.1.0"
-  }
+  },
+  "name": "eval",
+  "version": "1.0.0",
+  "description": "This directory contains the evaluation harness for PU-GPT. It runs a fixed set of questions through the real chat pipeline and reports objective metrics so every change (chunk size, top-k, score cutoff, reranker, model) can be compared.",
+  "main": "check.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
 }

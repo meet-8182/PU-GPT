@@ -11,6 +11,8 @@ import { AdminDashboardPage } from '@/pages/AdminDashboardPage';
 import { AdminDepartmentsPage } from '@/pages/AdminDepartmentsPage';
 import { AdminUsersPage } from '@/pages/AdminUsersPage';
 import { AdminStatusPage } from '@/pages/AdminStatusPage';
+import { AdminUniversityInfoPage } from '@/pages/AdminUniversityInfoPage';
+import { GuestPage } from '@/pages/GuestPage';
 import { MemorySettingsPage } from '@/pages/MemorySettingsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { Loader2 } from 'lucide-react';
@@ -30,19 +32,38 @@ function ProtectedRoute({ children, allowedRoles }) {
   if (loading) return <LoadingSpinner />;
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    return <Navigate to="/ask" replace />;
+    return <Navigate to={homeForRole(user?.role)} replace />;
   }
 
   return children;
 }
 
+function homeForRole(role) {
+  if (role === 'admin') return '/admin/dashboard';
+  if (role === 'teacher') return '/library';
+  return '/ask';
+}
+
 function PublicRoute({ children }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { user, isAuthenticated, loading } = useAuth();
 
   if (loading) return <LoadingSpinner />;
-  if (isAuthenticated) return <Navigate to="/ask" replace />;
+  if (isAuthenticated) return <Navigate to={homeForRole(user?.role)} replace />;
 
   return children;
+}
+
+/**
+ * `/` is the public landing page for visitors and the normal role landing page
+ * for signed-in users. Unauthenticated visitors see the guest chat.
+ */
+function RootRoute() {
+  const { user, isAuthenticated, loading } = useAuth();
+
+  if (loading) return <LoadingSpinner />;
+  if (isAuthenticated) return <Navigate to={homeForRole(user?.role)} replace />;
+
+  return <GuestPage />;
 }
 
 function WithErrorBoundary({ children }) {
@@ -56,6 +77,7 @@ function WithErrorBoundary({ children }) {
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<RootRoute />} />
       <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
 
       <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
@@ -72,9 +94,10 @@ export default function App() {
         <Route path="/admin/departments" element={<ProtectedRoute allowedRoles={['admin']}><WithErrorBoundary><AdminDepartmentsPage /></WithErrorBoundary></ProtectedRoute>} />
         <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['admin']}><WithErrorBoundary><AdminUsersPage /></WithErrorBoundary></ProtectedRoute>} />
         <Route path="/admin/status" element={<ProtectedRoute allowedRoles={['admin']}><WithErrorBoundary><AdminStatusPage /></WithErrorBoundary></ProtectedRoute>} />
+        <Route path="/admin/university-info" element={<ProtectedRoute allowedRoles={['admin']}><WithErrorBoundary><AdminUniversityInfoPage /></WithErrorBoundary></ProtectedRoute>} />
       </Route>
 
-      <Route path="*" element={<Navigate to="/ask" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

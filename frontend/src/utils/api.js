@@ -34,6 +34,8 @@ export const documentApi = {
   list: (params) => api.get('/documents', { params }),
   subjects: () => api.get('/documents/subjects'),
   delete: (id) => api.delete(`/documents/${id}`),
+  download: (id) => api.get(`/documents/${id}/download`, { responseType: 'blob' }),
+  reprocess: (id) => api.post(`/documents/${id}/reprocess`),
 };
 
 export const chatApi = {
@@ -96,6 +98,36 @@ export const adminApi = {
   updateUserRole: (id, role) => api.patch(`/admin/users/${id}/role`, { role }),
   deleteUser: (id) => api.delete(`/admin/users/${id}`),
   status: () => api.get('/admin/status'),
+};
+
+export const guestApi = {
+  infoStatus: () => api.get('/public/info-status'),
+  feedback: (vote) => api.post('/public/feedback', { vote }),
+  /**
+   * Ask the public assistant. Returns the raw fetch Response so the caller can
+   * read the SSE body. No auth header is sent and nothing is stored server-side.
+   */
+  ask: ({ message, history }, signal) => fetch('/api/public/ask', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, history }),
+    signal,
+  }),
+};
+
+export const universityInfoApi = {
+  list: (params) => api.get('/admin/university-info', { params }),
+  upload: (formData) => api.post('/admin/university-info/upload', formData),
+  quickFact: (data) => api.post('/admin/university-info/quick-fact', data),
+  approve: (id) => api.post(`/admin/university-info/${id}/approve`),
+  unapprove: (id) => api.post(`/admin/university-info/${id}/unapprove`),
+  replace: (id, formData) => api.post(`/admin/university-info/${id}/replace`, formData),
+  reprocess: (id) => api.post(`/admin/university-info/${id}/reprocess`),
+  remove: (id) => api.delete(`/admin/university-info/${id}`),
+  settings: () => api.get('/admin/university-info/settings'),
+  updateSettings: (data) => api.put('/admin/university-info/settings', data),
+  audit: (params) => api.get('/admin/university-info/audit', { params }),
+  preview: (params) => api.get('/admin/university-info/preview', { params }),
 };
 
 export const imageApi = {

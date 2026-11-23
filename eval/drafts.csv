@@ -1,0 +1,11 @@
+draft_id,question_id,question_text,expected_anchors,question_type,answerable,notes,hit_at3_validated
+ds-001,"ds-001","What is a stack?","LIFO, push, pop","definition",True,"Basic definition question",True
+ds-002,"ds-002","Explain the difference between stack and queue","LIFO, FIFO, push, pop, enqueue, dequeue","concept",True,"Comparison question",True
+ds-003,"ds-003","What is a stack? (follow-up)","LIFO, push operation, pop operation, stack overflow, stack underflow","followup",True,"Follow-up pair - second turn is judged",True
+ds-004,"ds-004","Implement stack in Java with code","class Stack, int[] arr, int top, push, pop, peek","code",True,"Code request",True
+ds-005,"ds-005","waht is a stak? (typo)","LIFO, push, pop","typo",True,"Typo tolerance test",True
+ds-006,"ds-006","What is the capital of France?","(none - out of scope)","unanswerable",False,"Out of scope - should offer web search",False
+ds-007,"ds-007","Compare array vs linked list for stack implementation","contiguous memory, dynamic size, cache friendly, pointer overhead","multipart",True,"Multi-part comparison",True
+ds-008,"ds-008","What is a queue?","FIFO, enqueue, dequeue","definition",True,"Basic definition",True
+ds-009,"ds-009","How does circular queue work?","wraps around, front and rear pointers, modulo arithmetic, circular array","concept",True,"Concept explanation",True
+ds-010,"ds-010","What is a queue? (follow-up)","FIFO, enqueue, dequeue","followup",True,"Short follow-up",True

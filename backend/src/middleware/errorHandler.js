@@ -7,10 +7,18 @@ import multer from 'multer';
  * details are logged server-side only.
  */
 export const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
-
   if (res.headersSent) {
     return next(err);
+  }
+
+  const status = err.status || err.statusCode || 500;
+
+  if (status >= 500) {
+    console.error('Error:', err);
+  } else {
+    // Expected client errors (403/404/409...) are not server faults; keep the
+    // terminal readable and log a single line instead of a stack trace.
+    console.warn(`[${status}] ${req.method} ${req.originalUrl} - ${err.message}`);
   }
 
   if (err instanceof multer.MulterError) {
@@ -42,8 +50,6 @@ export const errorHandler = (err, req, res, next) => {
   if (err.code === 11000) {
     return res.status(409).json({ error: 'Duplicate entry' });
   }
-
-  const status = err.status || err.statusCode || 500;
 
   // Only expose messages that the application explicitly marked as client-safe
   // (4xx AppErrors). Server errors stay generic.

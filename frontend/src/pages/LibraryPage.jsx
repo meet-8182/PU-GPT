@@ -11,6 +11,7 @@ import {
   Trash2,
   MoreVertical,
   Download,
+  RefreshCw,
   Image as ImageIcon,
   Brain
 } from 'lucide-react';
@@ -26,6 +27,7 @@ const STATUS_CONFIG = {
   processing: { icon: Loader2, color: 'text-amber-chalk', bg: 'bg-amber-chalk/10', label: 'Processing' },
   ocr_processing: { icon: Brain, color: 'text-sage', bg: 'bg-sage/10', label: 'OCR Processing' },
   failed: { icon: AlertCircle, color: 'text-rust', bg: 'bg-rust/10', label: 'Failed' },
+  needs_reupload: { icon: AlertCircle, color: 'text-amber-chalk', bg: 'bg-amber-chalk/10', label: 'Re-upload needed' },
 };
 
 export function LibraryPage() {
@@ -38,6 +40,8 @@ export function LibraryPage() {
   const [subjects, setSubjects] = useState([]);
   const [showFilters, setShowFilters] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [reprocessingId, setReprocessingId] = useState(null);
   const [uploadSubject, setUploadSubject] = useState('');
 
   const fetchDocuments = useCallback(async () => {
@@ -85,6 +89,49 @@ export function LibraryPage() {
       fetchDocuments();
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleDownload = async (doc) => {
+    setDownloadingId(doc.id);
+    try {
+      const res = await documentApi.download(doc.id);
+      const url = URL.createObjectURL(new Blob([res.data], { type: doc.fileType || 'application/octet-stream' }));
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = doc.title || 'document';
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      let message = 'Download failed. Please try again.';
+      const data = err?.response?.data;
+      if (data instanceof Blob) {
+        try {
+          message = JSON.parse(await data.text())?.error || message;
+        } catch {
+          // keep the default message
+        }
+      } else if (data?.error) {
+        message = data.error;
+      }
+      alert(message);
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleReprocess = async (doc) => {
+    setReprocessingId(doc.id);
+    try {
+      await documentApi.reprocess(doc.id);
+      fetchDocuments();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not reprocess this document.');
+      fetchDocuments();
+    } finally {
+      setReprocessingId(null);
     }
   };
 
@@ -178,6 +225,7 @@ return (
                   { value: 'processing', label: 'Processing' },
                   { value: 'ocr_processing', label: 'OCR Processing' },
                   { value: 'failed', label: 'Failed' },
+                  { value: 'needs_reupload', label: 'Re-upload needed' },
                 ]}
                 className="w-40"
               />
@@ -224,7 +272,7 @@ return (
                         {doc.chunkCount && <span>{doc.chunkCount} chunks</span>}
                         <span>{formatDistanceToNow(new Date(doc.uploadedAt), { addSuffix: true })}</span>
                       </div>
-                      {doc.status === 'failed' && doc.errorMessage && (
+                      {(doc.status === 'failed' || doc.status === 'needs_reupload') && doc.errorMessage && (
                         <p className="mt-2 text-sm text-rust flex items-center gap-1">
                           <AlertCircle className="w-3 h-3" />
                           {doc.errorMessage}
@@ -244,10 +292,35 @@ return (
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm" className="p-2">
-                        <Download className="w-4 h-4" />
+                      {(doc.status === 'failed' || doc.status === 'needs_reupload') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleReprocess(doc)}
+                          disabled={reprocessingId === doc.id}
+                          className="p-2"
+                          title="Retry processing"
+                          aria-label="Retry processing"
+                        >
+                          {reprocessingId === doc.id
+                            ? <Loader2 className="w-4 h-4 animate-spin" />
+                            : <RefreshCw className="w-4 h-4" />}
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDownload(doc)}
+                        disabled={downloadingId === doc.id}
+                        className="p-2"
+                        title="Download original file"
+                        aria-label="Download original file"
+                      >
+                        {downloadingId === doc.id
+                          ? <Loader2 className="w-4 h-4 animate-spin" />
+                          : <Download className="w-4 h-4" />}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(doc.id)} disabled={deletingId === doc.id} className="p-2 text-rust hover:bg-rust/10">
+                      <Button variant="ghost" size="sm" onClick={() => handleDelete(doc.id)} disabled={deletingId === doc.id} className="p-2 text-rust hover:bg-rust/10" title="Delete" aria-label="Delete">
                         {deletingId === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                       </Button>
                     </div>
