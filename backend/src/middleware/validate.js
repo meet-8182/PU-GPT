@@ -2,7 +2,7 @@ import { ZodError } from 'zod';
 
 const validationError = (res, error) => res.status(400).json({
   error: 'Validation failed',
-  details: error.errors.map(e => ({
+  details: error.issues.map(e => ({
     field: e.path.join('.'),
     message: e.message,
   })),

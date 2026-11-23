@@ -149,6 +149,7 @@ export function AdminUsersPage() {
   const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'teacher', department: '', subjects: '' });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
   const fetchUsers = useCallback(async () => {
     setLoading(true);
@@ -171,10 +172,14 @@ export function AdminUsersPage() {
   const handleCreate = async (e) => {
     e.preventDefault();
     setError('');
-    if (!formData.name.trim() || !formData.email.trim() || !formData.password.trim()) return;
+    setSuccess('');
+    if (!formData.name.trim() || !formData.email.trim() || !formData.password.trim()) {
+      setError('Full name, email, and password are required');
+      return;
+    }
     setSubmitting(true);
     try {
-      await adminApi.createTeacher({
+      const res = await adminApi.createTeacher({
         name: formData.name,
         email: formData.email,
         password: formData.password,
@@ -182,6 +187,7 @@ export function AdminUsersPage() {
         subjects: formData.subjects.split(',').map(s => s.trim()).filter(Boolean),
       });
       setShowCreateModal(false);
+      setSuccess(`User ${res.data?.teacher?.email || formData.email.trim()} created successfully`);
       setFormData({ name: '', email: '', password: '', role: 'teacher', department: '', subjects: '' });
       fetchUsers();
     } catch (err) {
@@ -214,6 +220,7 @@ export function AdminUsersPage() {
   const openCreate = () => {
     setFormData({ name: '', email: '', password: '', role: 'teacher', department: '', subjects: '' });
     setError('');
+    setSuccess('');
     setShowCreateModal(true);
   };
 
@@ -239,12 +246,17 @@ export function AdminUsersPage() {
         </Button>
       </div>
 
+      {success && (
+        <div className="p-3 bg-sage/10 border border-sage/30 rounded-lg text-sage text-sm" role="status">
+          {success}
+        </div>
+      )}
+
       <Card className="min-w-0">
         <CardHeader className="border-b border-rule-line">
           <Select
             value={roleFilter}
             onChange={(e) => { setRoleFilter(e.target.value); setPagination(prev => ({ ...prev, page: 1 })); }}
-            placeholder="All roles"
             options={[
               { value: '', label: 'All roles' },
               { value: 'student', label: 'Students' },

@@ -22,6 +22,7 @@ export function AdminDepartmentsPage() {
   const [editingDept, setEditingDept] = useState(null);
   const [formData, setFormData] = useState({ name: '', code: '' });
   const [submitting, setSubmitting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
 
   const fetchDepartments = useCallback(async () => {
     setLoading(true);
@@ -42,13 +43,27 @@ export function AdminDepartmentsPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     if (!formData.name.trim() || !formData.code.trim()) return;
+
+    const wasEditing = Boolean(editingDept);
+    const originalName = wasEditing
+      ? (typeof editingDept === 'string' ? editingDept : editingDept.name)
+      : null;
+
     setSubmitting(true);
+    setSuccessMessage('');
     try {
-      await adminApi.createDepartment(formData);
+      const payload = { name: formData.name.trim(), code: formData.code.trim() };
+      if (wasEditing) {
+        await adminApi.updateDepartment(originalName, payload);
+      } else {
+        await adminApi.createDepartment(payload);
+      }
       setShowModal(false);
       setFormData({ name: '', code: '' });
       setEditingDept(null);
+      setSuccessMessage(wasEditing ? 'Department updated' : 'Department created');
       fetchDepartments();
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to save department');
@@ -60,19 +75,23 @@ export function AdminDepartmentsPage() {
   const openCreate = () => {
     setEditingDept(null);
     setFormData({ name: '', code: '' });
+    setSuccessMessage('');
     setShowModal(true);
   };
 
   const openEdit = (dept) => {
     setEditingDept(dept);
     setFormData({ name: dept.name || dept, code: dept.code || '' });
+    setSuccessMessage('');
     setShowModal(true);
   };
 
   const handleDelete = async (deptName) => {
     if (!confirm(`Delete department "${deptName}"?`)) return;
+    setSuccessMessage('');
     try {
       await adminApi.deleteDepartment(deptName);
+      setSuccessMessage('Department deleted');
       fetchDepartments();
     } catch (err) {
       alert('Failed to delete department');
@@ -101,6 +120,10 @@ export function AdminDepartmentsPage() {
         </Button>
       </div>
 
+      {successMessage && (
+        <p className="text-sm text-sage" role="status">{successMessage}</p>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {loading ? (
@@ -121,7 +144,7 @@ export function AdminDepartmentsPage() {
           ) : (
             <div className="divide-y divide-rule-line">
               {departments.map((dept) => (
-                <div key={dept} className="p-4 flex items-center justify-between hover:bg-rule-line/20 transition-colors">
+                <div key={typeof dept === 'string' ? dept : dept.name} className="p-4 flex items-center justify-between hover:bg-rule-line/20 transition-colors">
                   <div className="flex items-center gap-4">
                     <div className="w-10 h-10 bg-amber-chalk/10 rounded-lg flex items-center justify-center">
                       <Database className="w-5 h-5 text-amber-chalk" />

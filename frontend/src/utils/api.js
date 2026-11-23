@@ -87,6 +87,7 @@ export const teacherApi = {
 export const adminApi = {
   departments: () => api.get('/admin/departments'),
   createDepartment: (data) => api.post('/admin/departments', data),
+  updateDepartment: (name, data) => api.patch(`/admin/departments/${encodeURIComponent(name)}`, data),
   deleteDepartment: (name) => api.delete(`/admin/departments/${encodeURIComponent(name)}`),
   subjects: () => api.get('/admin/subjects'),
   createSubject: (data) => api.post('/admin/subjects', data),

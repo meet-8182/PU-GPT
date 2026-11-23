@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import express from 'express';
-import { User, Document } from '../models/index.js';
+import { User, Document, Department } from '../models/index.js';
 import {
   requireAuth,
   authorize,
@@ -55,13 +55,13 @@ const createTeacherSchema = z.object({
   name: z.string().min(2).max(100),
   email: z.string().email(),
   password: z.string().min(8).max(100),
-  department: z.string().min(1).max(100),
+  department: z.string().trim().max(100).optional(),
   subjects: z.array(z.string().max(100)).max(50).optional(),
 });
 
 const departmentSchema = z.object({
-  name: z.string().min(2).max(100),
-  code: z.string().min(2).max(10).toUpperCase(),
+  name: z.string().trim().min(2).max(100),
+  code: z.string().trim().min(2).max(10).toUpperCase(),
 });
 
 const subjectSchema = z.object({
@@ -81,8 +81,29 @@ const userIdSchema = z.object({
 
 router.get('/departments', async (req, res, next) => {
   try {
-    const departments = await User.distinct('department', { role: { $in: ['teacher', 'student'] } });
-    res.json({ departments: departments.filter(d => d).sort() });
+    const [stored, userDepartments] = await Promise.all([
+      Department.find().select('name code').lean(),
+      User.distinct('department', { role: { $in: ['teacher', 'student'] } }),
+    ]);
+
+    // Departments created from the admin page live in their own collection,
+    // while departments assigned to users are still discovered from user
+    // records. Merge both sources and de-duplicate case-insensitively, keeping
+    // the stored entry (which carries the code) when a name appears in both.
+    const byName = new Map();
+    for (const dept of stored) {
+      if (dept.name) {
+        byName.set(dept.name.toLowerCase(), { name: dept.name, code: dept.code || '' });
+      }
+    }
+    for (const name of userDepartments) {
+      if (name && !byName.has(name.toLowerCase())) {
+        byName.set(name.toLowerCase(), { name, code: '' });
+      }
+    }
+
+    const departments = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ departments });
   } catch (error) {
     next(error);
   }
@@ -90,8 +111,64 @@ router.get('/departments', async (req, res, next) => {
 
 router.post('/departments', validate(departmentSchema), async (req, res, next) => {
   try {
-    res.json({ message: 'Department structure noted', department: req.body });
+    const { name, code } = req.body;
+
+    const existing = await Department.findOne({ name })
+      .collation({ locale: 'en', strength: 2 });
+    if (existing) {
+      throw new AppError('A department with this name already exists', 409);
+    }
+
+    const department = await Department.create({ name, code });
+    res.status(201).json({ department });
   } catch (error) {
+    if (error.code === 11000) {
+      return next(new AppError('A department with this name already exists', 409));
+    }
+    next(error);
+  }
+});
+
+router.patch('/departments/:name', validateParams(departmentNameSchema), validate(departmentSchema), async (req, res, next) => {
+  try {
+    const originalName = req.params.name;
+    const { name, code } = req.body;
+
+    const department = await Department.findOne({ name: originalName })
+      .collation({ locale: 'en', strength: 2 });
+
+    // Departments that only exist on user records are not in the collection
+    // yet; register them on first edit instead of failing.
+    if (!department) {
+      const created = await Department.create({ name, code });
+      if (originalName !== name) {
+        await User.updateMany({ department: originalName }, { $set: { department: name } });
+      }
+      return res.status(201).json({ department: created });
+    }
+
+    const conflict = await Department.findOne({
+      _id: { $ne: department._id },
+      name,
+    }).collation({ locale: 'en', strength: 2 });
+    if (conflict) {
+      throw new AppError('A department with this name already exists', 409);
+    }
+
+    department.name = name;
+    department.code = code;
+    department.updatedAt = Date.now();
+    await department.save();
+
+    if (originalName !== name) {
+      await User.updateMany({ department: originalName }, { $set: { department: name } });
+    }
+
+    res.json({ department });
+  } catch (error) {
+    if (error.code === 11000) {
+      return next(new AppError('A department with this name already exists', 409));
+    }
     next(error);
   }
 });
@@ -118,11 +195,14 @@ router.delete('/departments/:name', validateParams(departmentNameSchema), async 
     // Express has already URL-decoded route params; decodeURIComponent() here
     // would double-decode attacker-controlled input.
     const name = req.params.name;
-    const result = await User.updateMany(
-      { department: name },
-      { $unset: { department: 1 } }
-    );
-    res.json({ message: 'Department removed from users', modifiedCount: result.modifiedCount });
+    const [result, departmentResult] = await Promise.all([
+      User.updateMany(
+        { department: name },
+        { $unset: { department: 1 } }
+      ),
+      Department.deleteMany({ name }),
+    ]);
+    res.json({ message: 'Department removed from users', modifiedCount: result.modifiedCount, deletedCount: departmentResult.deletedCount });
   } catch (error) {
     next(error);
   }
