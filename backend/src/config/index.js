@@ -78,6 +78,18 @@ export const config = {
   openaiApiKey: process.env.OPENAI_API_KEY, // for whisper-api
   assemblyAiApiKey: process.env.ASSEMBLYAI_API_KEY, // for assemblyai
 
+  // Pre-login "About Parul University" guest mode
+  guestModeEnabled: parseBool(process.env.GUEST_MODE_ENABLED, true),
+  guestRateLimitPerMin: parseInt(process.env.GUEST_RATE_LIMIT_PER_MIN) || 10,
+  guestDailyLimit: parseInt(process.env.GUEST_DAILY_LIMIT) || 60,
+  guestMaxConcurrent: parseInt(process.env.GUEST_MAX_CONCURRENT) || 3,
+  guestMaxOutputTokens: parseInt(process.env.GUEST_MAX_OUTPUT_TOKENS) || 400,
+  guestMaxMessageChars: parseInt(process.env.GUEST_MAX_MESSAGE_CHARS) || 500,
+  guestMaxHistoryTurns: parseInt(process.env.GUEST_MAX_HISTORY_TURNS) || 3,
+  guestUnansweredLog: parseBool(process.env.GUEST_UNANSWERED_LOG, false),
+  captchaProvider: process.env.CAPTCHA_PROVIDER || '',
+  captchaSiteKey: process.env.CAPTCHA_SITE_KEY || '',
+
   // Rate limits (per authenticated user)
   rateLimitOcrPerMin: parseInt(process.env.RATE_LIMIT_OCR_PER_MIN) || 30,
   rateLimitImageGenPerMin: parseInt(process.env.RATE_LIMIT_IMAGE_GEN_PER_MIN) || 10,

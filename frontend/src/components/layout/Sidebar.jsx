@@ -16,6 +16,7 @@ import {
   Users,
   Database,
   LayoutDashboard,
+  GraduationCap,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { chatApi } from '@/utils/api';
@@ -34,6 +35,7 @@ const adminNavItems = [
   { path: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/admin/departments', label: 'Departments', icon: Database },
   { path: '/admin/users', label: 'User Management', icon: Users },
+  { path: '/admin/university-info', label: 'University Info', icon: GraduationCap },
   { path: '/admin/status', label: 'System Status', icon: Settings },
 ];
 
@@ -284,7 +286,10 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
           </div>
         )}
         <button
-          onClick={logout}
+          onClick={() => {
+            logout();
+            navigate('/');
+          }}
           className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-chalk/70 hover:text-rust hover:bg-rust/10 transition-all duration-200 w-full ${collapsed ? 'justify-center' : ''}`}
           title={collapsed ? 'Log out' : undefined}
         >

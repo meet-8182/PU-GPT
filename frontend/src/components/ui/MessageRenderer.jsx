@@ -86,6 +86,9 @@ function CitationMarker({ index, cite, isMobile }) {
 
   const docTitle = getDocTitle(cite);
   const pageInfo = cite.page ? `, p.${cite.page}` : '';
+  const updatedLabel = cite.lastUpdated
+    ? ` · updated ${new Date(cite.lastUpdated).toLocaleDateString()}`
+    : '';
 
   if (isMobile) {
     return (
@@ -101,7 +104,7 @@ function CitationMarker({ index, cite, isMobile }) {
         </button>
         {expanded && (
           <div className="absolute bottom-full left-0 mb-2 w-72 bg-chalkboard border border-amber-chalk/30 rounded-lg shadow-xl p-3 z-20 animate-in">
-            <p className="font-medium text-amber-chalk text-xs mb-1">{docTitle}{cite.page ? `, p.${cite.page}` : ''}</p>
+            <p className="font-medium text-amber-chalk text-xs mb-1">{docTitle}{pageInfo}{updatedLabel}</p>
             <p className="text-sm text-chalk/80">{cite.excerpt}</p>
             {cite.score && (
               <p className="text-xs text-chalk/50 mt-1">Relevance: {(cite.score * 100).toFixed(0)}%</p>
@@ -133,7 +136,7 @@ function CitationMarker({ index, cite, isMobile }) {
       {/* Margin note tooltip */}
       <div className="margin-note absolute right-full mr-4 w-64">
         <div className="margin-note-content bg-chalkboard border border-amber-chalk/30 rounded-lg p-3 shadow-xl">
-          <p className="font-medium text-amber-chalk text-xs mb-1">{getDocTitle(cite)}{cite.page ? `, p.${cite.page}` : ''}</p>
+          <p className="font-medium text-amber-chalk text-xs mb-1">{getDocTitle(cite)}{pageInfo}{updatedLabel}</p>
           <p className="text-sm text-chalk/80">{cite.excerpt}</p>
           {cite.score && (
             <p className="text-xs text-chalk/50 mt-1">Relevance: {(cite.score * 100).toFixed(0)}%</p>
@@ -403,7 +406,7 @@ const customComponents = {
   ),
 };
 
-export function MessageRenderer({ content, citations = [], webSources = [], isWebSearch = false, attachments = [] }) {
+export function MessageRenderer({ content, citations = [], webSources = [], isWebSearch = false, attachments = [], sourcesLabel = 'Sources (Course Material)' }) {
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
@@ -445,7 +448,7 @@ export function MessageRenderer({ content, citations = [], webSources = [], isWe
             <div className="mb-4">
               <h4 className="font-display text-sm font-medium text-chalk mb-3 flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-chalk"></span>
-                Sources (Course Material)
+                {sourcesLabel}
               </h4>
               <div className="space-y-2">
                 {citations.map((cite, i) => (

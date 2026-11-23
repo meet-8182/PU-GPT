@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { BookOpen, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -115,7 +115,13 @@ export function LoginPage() {
           </Button>
         </form>
 
-        <p className="mt-6 text-center text-chalk/50 text-sm">
+        <p className="mt-6 text-center text-sm">
+          <Link to="/" className="text-amber-chalk hover:underline">
+            Ask about Parul University
+          </Link>
+        </p>
+
+        <p className="mt-2 text-center text-chalk/50 text-sm">
           Don't have an account? Contact your administrator for access.
         </p>
       </div>

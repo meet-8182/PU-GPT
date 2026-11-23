@@ -249,6 +249,15 @@ async function extractText(filePath, fileType) {
   throw new Error(`Unsupported file type: ${fileType}`);
 }
 
+/**
+ * Extract text from an uploaded document. Shared by course ingestion and the
+ * university-information (guest) pipeline so PDF/DOCX/TXT handling stays in one
+ * place. Images are handled by ocrService.
+ */
+export async function extractTextFromFile(filePath, fileType) {
+  return extractText(filePath, fileType);
+}
+
 // Retry wrapper for transient failures
 async function withRetry(promiseFn, retries = 3, delayMs = 1000, label = 'Operation') {
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -262,7 +271,7 @@ async function withRetry(promiseFn, retries = 3, delayMs = 1000, label = 'Operat
   }
 }
 
-async function generateEmbeddings(texts) {
+export async function generateEmbeddings(texts) {
   const embeddings = [];
   for (const text of texts) {
     // Add timeout for each embedding (30 seconds) with retry
