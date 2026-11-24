@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { 
   Users, 
@@ -19,7 +18,6 @@ import { formatDistanceToNow } from 'date-fns';
 
 export function AdminDashboardPage() {
   const { user, isAuthenticated, isAdmin } = useAuth();
-  const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -33,7 +31,7 @@ export function AdminDashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, []);3
 
   useEffect(() => {
     if (!isAuthenticated || !isAdmin) return;
@@ -176,21 +174,21 @@ export function AdminDashboardPage() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <button onClick={() => navigate('/admin/users')} className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
+            <button className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
               <div className="w-10 h-10 bg-amber-chalk/10 rounded-lg flex items-center justify-center mb-2">
                 <Users className="w-5 h-5 text-amber-chalk" />
               </div>
               <p className="font-medium text-chalk">Manage Users</p>
               <p className="text-sm text-chalk/60">View and edit user accounts</p>
             </button>
-            <button onClick={() => navigate('/admin/departments')} className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
+            <button className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
               <div className="w-10 h-10 bg-sage/10 rounded-lg flex items-center justify-center mb-2">
                 <Database className="w-5 h-5 text-sage" />
               </div>
               <p className="font-medium text-chalk">Departments</p>
               <p className="text-sm text-chalk/60">Configure department structure</p>
             </button>
-            <button onClick={() => navigate('/library')} className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
+            <button className="btn-secondary text-left p-4 hover:bg-rule-line/50 transition-colors">
               <div className="w-10 h-10 bg-rust/10 rounded-lg flex items-center justify-center mb-2">
                 <FileText className="w-5 h-5 text-rust" />
               </div>
