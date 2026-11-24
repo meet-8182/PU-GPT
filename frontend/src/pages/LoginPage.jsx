@@ -49,7 +49,14 @@ export function LoginPage() {
         navigate('/ask');
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Login failed. Please try again.');
+      const backendError = err.response?.data?.error;
+      setError(
+        typeof backendError === 'string'
+          ? backendError
+          : typeof backendError?.message === 'string'
+            ? backendError.message
+            : 'Login failed. Please try again.'
+      );
     } finally {
       submittingRef.current = false;
       setLoading(false);
