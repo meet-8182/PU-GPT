@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import {
   Brain,
@@ -17,6 +18,7 @@ import { toast } from 'sonner';
 
 export function SettingsPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -88,29 +90,39 @@ export function SettingsPage() {
                   </p>
                 </div>
               </div>
-              <Button
-                variant={memoryEnabled ? 'primary' : 'ghost'}
-                size="sm"
-                onClick={() => handleToggleMemory(!memoryEnabled)}
-                disabled={saving}
-                className="whitespace-nowrap"
-              >
-                {saving ? (
-                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                ) : (
-                  memoryEnabled ? (
-                    <>
-                      <ToggleRight className="w-4 h-4 mr-2" />
-                      Enabled
-                    </>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate('/memory')}
+                  className="whitespace-nowrap"
+                >
+                  Manage memories
+                </Button>
+                <Button
+                  variant={memoryEnabled ? 'primary' : 'ghost'}
+                  size="sm"
+                  onClick={() => handleToggleMemory(!memoryEnabled)}
+                  disabled={saving}
+                  className="whitespace-nowrap"
+                >
+                  {saving ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
                   ) : (
-                    <>
-                      <ToggleLeft className="w-4 h-4 mr-2" />
-                      Disabled
-                    </>
-                  )
-                )}
-              </Button>
+                    memoryEnabled ? (
+                      <>
+                        <ToggleRight className="w-4 h-4 mr-2" />
+                        Enabled
+                      </>
+                    ) : (
+                      <>
+                        <ToggleLeft className="w-4 h-4 mr-2" />
+                        Disabled
+                      </>
+                    )
+                  )}
+                </Button>
+              </div>
             </div>
             <p className="text-xs text-chalk/50 mt-2">
               {memoryEnabled

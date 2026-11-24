@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { BookOpen, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { BookOpen, Eye, EyeOff } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
@@ -13,6 +13,7 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const submittingRef = useRef(false);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -31,7 +32,10 @@ export function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     if (!validate()) return;
+
+    submittingRef.current = true;
     setLoading(true);
     setError('');
     try {
@@ -47,6 +51,7 @@ export function LoginPage() {
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Please try again.');
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   };
@@ -111,7 +116,7 @@ export function LoginPage() {
           </div>
 
           <Button type="submit" className="w-full" loading={loading}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sign in'}
+            Sign in
           </Button>
         </form>
 
