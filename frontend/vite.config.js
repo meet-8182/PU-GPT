@@ -15,9 +15,11 @@ export default defineConfig({
     host: 'localhost',
     port: 5173,
     strictPort: true,
+    // Allow Cloudflare tunnel host for development
+    allowedHosts: ['lead-combat-lots-spatial.trycloudflare.com', 'localhost', '.trycloudflare.com'],
     // Only the local dev app may make cross-origin requests to the dev server.
     cors: {
-      origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: ['http://localhost:5173', 'http://127.0.0.1:5173','http://lead-combat-lots-spatial.trycloudflare.com'],
     },
     hmr: {
       protocol: 'ws',
