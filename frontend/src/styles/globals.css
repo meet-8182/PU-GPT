@@ -109,6 +109,31 @@
     @apply bg-[var(--pu-surface)] border-rule-line text-ink-dark placeholder:text-ink-dark/40 focus:border-amber-chalk focus:ring-amber-chalk/20;
   }
 
+  /* Teacher filter selects: style the native option popup so it follows the
+     app palette instead of the browser's default white menu. */
+  .teacher-select {
+    color-scheme: dark;
+  }
+
+  .light .teacher-select {
+    color-scheme: light;
+  }
+
+  .teacher-select option,
+  .teacher-select optgroup {
+    background-color: var(--pu-surface);
+    color: var(--pu-surface-text);
+    border-color: var(--pu-border);
+  }
+
+  .teacher-select option:checked,
+  .teacher-select option:hover,
+  .teacher-select option:focus {
+    background-color: var(--pu-accent);
+    background-image: linear-gradient(0deg, var(--pu-accent), var(--pu-accent));
+    color: var(--pu-cream);
+  }
+
   .card {
     @apply bg-rule-line/20 border border-rule-line rounded-xl p-6;
   }
@@ -649,6 +674,7 @@
 }
 
 .pu-composer {
+  position: relative;
   display: flex;
   align-items: center;
   min-height: 76px;
@@ -656,11 +682,33 @@
   border-radius: 22px;
   background: var(--pu-composer);
   box-shadow: 0 10px 26px var(--pu-shadow);
-  transition: box-shadow 0.2s ease;
+  transition: box-shadow 0.2s ease, outline-color 0.2s ease;
 }
 
 .pu-composer:focus-within {
   box-shadow: 0 12px 30px var(--pu-shadow);
+}
+
+.pu-composer.is-drag-over {
+  outline: 2px dashed var(--pu-cream);
+  outline-offset: -7px;
+  box-shadow: 0 0 0 4px rgba(127, 168, 143, 0.35), 0 14px 32px var(--pu-shadow);
+}
+
+.pu-composer.is-drag-over::after {
+  content: 'Drop file to attach';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: rgba(31, 53, 41, 0.72);
+  color: var(--pu-cream);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  pointer-events: none;
 }
 
 .pu-plus-wrap {

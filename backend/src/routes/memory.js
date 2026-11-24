@@ -95,6 +95,25 @@ router.post('/', authorize('student'), validate(createMemorySchema), async (req,
 });
 
 /**
+ * PATCH /api/memory/toggle
+ * Enable/disable memory for the student.
+ *
+ * This must be declared before PATCH /:id. Express matches routes in order, so
+ * /toggle would otherwise be treated as a memory id and fail validation.
+ */
+router.patch('/toggle', authorize('student'), validate(z.object({
+  enabled: z.boolean(),
+})), async (req, res, next) => {
+  try {
+    const { enabled } = req.body;
+    const result = await toggleMemoryEnabled(req.user._id, enabled);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * PATCH /api/memory/:id
  * Update a memory
  */
@@ -108,6 +127,9 @@ router.patch('/:id', authorize('student'), validate(updateMemorySchema), async (
   } catch (error) {
     if (error.message === 'Cannot store sensitive information') {
       return res.status(400).json({ error: error.message });
+    }
+    if (error.message === 'Memory not found') {
+      return res.status(404).json({ error: error.message });
     }
     next(error);
   }
@@ -139,22 +161,6 @@ router.delete('/', authorize('student'), validate(z.object({
   try {
     const result = await clearAllMemories(req.user._id);
     res.json({ success: true, deletedCount: result.deletedCount });
-  } catch (error) {
-    next(error);
-  }
-});
-
-/**
- * PATCH /api/memory/toggle
- * Enable/disable memory for the student
- */
-router.patch('/toggle', authorize('student'), validate(z.object({
-  enabled: z.boolean(),
-})), async (req, res, next) => {
-  try {
-    const { enabled } = req.body;
-    const result = await toggleMemoryEnabled(req.user._id, enabled);
-    res.json(result);
   } catch (error) {
     next(error);
   }

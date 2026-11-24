@@ -86,6 +86,13 @@ const EXAMPLE_PROMPTS = {
   ],
 };
 
+// Chat attachments use the same limits as the existing picker and backend route.
+const CHAT_ALLOWED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
+const CHAT_MAX_FILE_SIZE = 10 * 1024 * 1024;
+const CHAT_FILE_TYPE_ERROR = 'Only PNG, JPEG, WebP images and PDF files are allowed';
+const CHAT_FILE_SIZE_ERROR = 'File size exceeds 10MB limit';
+
+
 // Sanitize query: trim, collapse spaces, block empty
 // NOTE: Web search trigger (leading backslash) is now detected by BACKEND
 // This function only does basic sanitization, no backslash handling
@@ -120,6 +127,7 @@ export function AskPage() {
   // Pending file (not yet sent) - shows in chip above input
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingFilePreview, setPendingFilePreview] = useState(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [ocrText, setOcrText] = useState('');
   const [showOcrPreview, setShowOcrPreview] = useState(false);
   const [generatingImage, setGeneratingImage] = useState(false);
@@ -131,6 +139,7 @@ export function AskPage() {
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const plusMenuRef = useRef(null);
+  const dragDepthRef = useRef(0);
   // Track the last loaded conversation ID to prevent duplicate loads
   const lastLoadedConvIdRef = useRef(null);
   // Track if we're mid-stream and already have a conversationId from the backend
@@ -468,21 +477,27 @@ export function AskPage() {
     return EXAMPLE_PROMPTS[subject] || EXAMPLE_PROMPTS.default;
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    // Validate file type
-    const allowedTypes = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
-    if (!allowedTypes.includes(file.type)) {
-      setError('Only PNG, JPEG, WebP images and PDF files are allowed');
-      return;
+  const applyFileAttachment = (file) => {
+    // Validate against the same types and size the existing picker/backend use.
+    if (!CHAT_ALLOWED_FILE_TYPES.includes(file.type)) {
+      setError(CHAT_FILE_TYPE_ERROR);
+      return false;
     }
 
-    // Validate file size (10MB)
-    if (file.size > 10 * 1024 * 1024) {
-      setError('File size exceeds 10MB limit');
-      return;
+    if (file.size > CHAT_MAX_FILE_SIZE) {
+      setError(CHAT_FILE_SIZE_ERROR);
+      return false;
+    }
+
+    // The composer holds one attachment, so ignore an exact duplicate drop.
+    if (
+      pendingFile &&
+      pendingFile.name === file.name &&
+      pendingFile.type === file.type &&
+      pendingFile.size === file.size
+    ) {
+      setError('');
+      return true;
     }
 
     setPendingFile(file);
@@ -490,6 +505,7 @@ export function AskPage() {
 
     // Create preview for images
     if (file.type.startsWith('image/')) {
+      setPendingFilePreview(null);
       const reader = new FileReader();
       reader.onload = (event) => {
         setPendingFilePreview(event.target.result);
@@ -500,14 +516,81 @@ export function AskPage() {
       setPendingFilePreview(null);
     }
 
+    return true;
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (file) applyFileAttachment(file);
+
     // Reset file input
     e.target.value = '';
+  };
+
+  const isFileDrag = (event) =>
+    Array.from(event.dataTransfer?.types || []).includes('Files');
+
+  const handleDragEnter = (event) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (loading || streaming || generatingImage) return;
+
+    dragDepthRef.current += 1;
+    setIsDraggingFile(true);
+  };
+
+  const handleDragOver = (event) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleDragLeave = (event) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDraggingFile(false);
+  };
+
+  const handleDrop = (event) => {
+    if (!isFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    dragDepthRef.current = 0;
+    setIsDraggingFile(false);
+    if (loading || streaming || generatingImage) return;
+
+    const files = Array.from(event.dataTransfer?.files || []);
+    if (files.length === 0) return;
+
+    // The existing chat upload accepts one file per message.
+    if (files.length > 1) {
+      setError('Please attach one file per message.');
+      return;
+    }
+
+    if (applyFileAttachment(files[0])) {
+      textareaRef.current?.focus();
+    }
   };
 
   const getFileIcon = (mimeType) => {
     if (mimeType === 'application/pdf') return <FileText className="w-5 h-5 text-rust" />;
     if (mimeType.startsWith('image/')) return <Image className="w-5 h-5 text-sage" />;
     return <FileText className="w-5 h-5 text-chalk/50" />;
+  };
+
+  const getFileTypeLabel = (mimeType) => {
+    if (mimeType === 'application/pdf') return 'PDF';
+    if (mimeType === 'image/png') return 'PNG';
+    if (mimeType === 'image/jpeg') return 'JPG';
+    if (mimeType === 'image/webp') return 'WebP';
+    return 'FILE';
   };
 
   const useOcrText = () => {
@@ -1169,7 +1252,7 @@ export function AskPage() {
               <div className="min-w-0 flex-1">
                 <p className="pu-pending-name">{pendingFile?.name}</p>
                 <p className="pu-pending-size">
-                  {(pendingFile?.size / 1024).toFixed(1)} KB
+                  {getFileTypeLabel(pendingFile?.type)} · {(pendingFile?.size / 1024).toFixed(1)} KB
                 </p>
               </div>
               <button
@@ -1184,7 +1267,13 @@ export function AskPage() {
           )}
 
           <form onSubmit={handleAsk} className="pu-composer-form" noValidate>
-            <div className="pu-composer">
+            <div
+              className={`pu-composer ${isDraggingFile ? 'is-drag-over' : ''}`}
+              onDragEnter={handleDragEnter}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               <div className="pu-plus-wrap" ref={plusMenuRef}>
                 <button
                   type="button"

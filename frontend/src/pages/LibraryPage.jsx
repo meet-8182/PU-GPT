@@ -206,14 +206,14 @@ return (
                 onChange={(e) => { setFilters(prev => ({ ...prev, subject: e.target.value })); setPagination(prev => ({ ...prev, page: 1 })); }}
                 placeholder="All subjects"
                 options={[{ value: '', label: 'All subjects' }, ...subjects.map(s => ({ value: s, label: s }))]}
-                className="w-48"
+                className="w-48 teacher-select"
               />
               <Select
                 value={filters.semester}
                 onChange={(e) => { setFilters(prev => ({ ...prev, semester: e.target.value })); setPagination(prev => ({ ...prev, page: 1 })); }}
                 placeholder="All semesters"
                 options={['', '1', '2', '3', '4', '5', '6', '7', '8', 'all'].map(s => ({ value: s, label: s || 'All semesters' }))}
-                className="w-40"
+                className="w-40 teacher-select"
               />
               <Select
                 value={filters.status}
@@ -227,7 +227,7 @@ return (
                   { value: 'failed', label: 'Failed' },
                   { value: 'needs_reupload', label: 'Re-upload needed' },
                 ]}
-                className="w-40"
+                className="w-40 teacher-select"
               />
             </div>
           </div>
