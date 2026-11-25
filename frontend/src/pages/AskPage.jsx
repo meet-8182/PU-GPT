@@ -140,6 +140,10 @@ export function AskPage() {
   const fileInputRef = useRef(null);
   const plusMenuRef = useRef(null);
   const dragDepthRef = useRef(0);
+  // Track the last subject read from the URL so the sync effect can tell an
+  // external (sidebar/drawer) change apart from a composer pick that is still
+  // waiting for React Router to commit the new query string.
+  const lastUrlSubjectRef = useRef(urlSubject);
   // Track the last loaded conversation ID to prevent duplicate loads
   const lastLoadedConvIdRef = useRef(null);
   // Track if we're mid-stream and already have a conversationId from the backend
@@ -400,7 +404,15 @@ export function AskPage() {
   // Never do this while an existing conversation is open: the conversation's
   // own subject is authoritative for that chat.
   useEffect(() => {
-    if (!isAuthenticated || urlConversationId || !urlSubject || urlSubject === subject) return;
+    const urlSubjectChanged = lastUrlSubjectRef.current !== urlSubject;
+    lastUrlSubjectRef.current = urlSubject;
+    if (!isAuthenticated || urlConversationId || !urlSubject) return;
+    // Only react to genuine URL changes. A subject picked in the composer also
+    // writes the URL, but React Router 7 commits that navigation after the
+    // state update; without this guard the stale URL value would revert the
+    // pick back to the previous subject.
+    if (!urlSubjectChanged) return;
+    if (urlSubject === subject) return;
 
     setSubject(urlSubject);
     setMessages([]);
