@@ -10,6 +10,7 @@ import { MessageRenderer } from '@/components/ui/MessageRenderer';
 import { chatApi } from '@/utils/api';
 import { ConversationHistoryPanel } from '@/components/ui/ConversationHistoryPanel';
 import { useSpeechToText } from '@/hooks/useSpeechToText';
+import { Orb } from '@yogesharc/thinking-orbs';
 
 const SUGGESTION_LABELS = {
   'Computer Science': [
@@ -1157,20 +1158,42 @@ export function AskPage() {
                 <div className="pu-msg-body">
                   <div className="pu-msg-meta">
                     <span>Assistant</span>
-                    {status ? (
-                      <span className="pu-status">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        {getStatusText()}
-                      </span>
-                    ) : (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {status && status.stage !== 'generation' && (
+                      <span className="pu-status">{getStatusText()}</span>
                     )}
                   </div>
                   <div className="pu-msg-bubble">
-                    <div className="whitespace-pre-wrap">
-                      {currentAnswer || (status ? getStatusText() : '')}
-                      {currentAnswer && <span className="pu-stream-caret" />}
-                    </div>
+                    {streaming && (
+                      <div
+                        className={`pu-orb-loading${currentAnswer ? ' is-hiding' : ''}`}
+                        role="status"
+                        aria-live="polite"
+                        aria-hidden={currentAnswer ? 'true' : undefined}
+                      >
+                        <Orb
+                          state="compacting"
+                          size={100}
+                          speed={1.2}
+                          density={1.5}
+                          label="Searching"
+                          className="pu-orb-anim"
+                        />
+                        <span className="pu-orb-label">
+                          Searching
+                          <span className="pu-orb-dots" aria-hidden="true">
+                            <span className="pu-orb-dot">.</span>
+                            <span className="pu-orb-dot">.</span>
+                            <span className="pu-orb-dot">.</span>
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                    {currentAnswer && (
+                      <div className="whitespace-pre-wrap">
+                        {currentAnswer}
+                        <span className="pu-stream-caret" />
+                      </div>
+                    )}
                     {generatingImage && (
                       <div className="mt-3 flex items-center gap-2 text-sm opacity-80">
                         <Loader2 className="h-4 w-4 animate-spin" />

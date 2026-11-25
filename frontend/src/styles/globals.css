@@ -1655,3 +1655,86 @@
     width: min(300px, 90vw);
   }
 }
+
+/* ------------------------- AI thinking orb (Thinking Orbs) ------------------------- */
+
+.pu-orb-loading {
+  display: flex;
+  min-width: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 0 2px;
+  overflow: hidden;
+  max-height: 200px;
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.25s ease, transform 0.25s ease, max-height 0.3s ease, padding 0.3s ease;
+  animation: pu-orb-in 0.3s ease-out;
+}
+
+.pu-orb-loading.is-hiding {
+  opacity: 0;
+  transform: scale(0.92);
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  pointer-events: none;
+}
+
+/* The official orb draws in currentColor, so tint and glow are theme-driven.
+   CSS only scales the SVG; the animation itself stays inside the package. */
+.pu-orb-anim {
+  width: clamp(64px, 9vw, 96px);
+  height: auto;
+  color: #67e8f9;
+  filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.45))
+          drop-shadow(0 0 16px rgba(139, 92, 246, 0.22));
+}
+
+.light .pu-orb-anim {
+  color: #0e7490;
+  filter: drop-shadow(0 0 5px rgba(14, 116, 144, 0.3));
+}
+
+.pu-orb-label {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--pu-surface-text);
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.pu-orb-dots {
+  display: inline-flex;
+  min-width: 1.05em;
+  justify-content: flex-start;
+}
+
+.pu-orb-dot {
+  animation: pu-orb-dot 1.4s ease-in-out infinite;
+}
+
+.pu-orb-dot:nth-child(2) { animation-delay: 0.2s; }
+.pu-orb-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes pu-orb-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pu-orb-dot {
+  0%, 80%, 100% { opacity: 0.25; }
+  40%           { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pu-orb-loading,
+  .pu-orb-dot {
+    animation: none;
+    transition: none;
+  }
+
+  .pu-orb-dot { opacity: 1; }
+}
