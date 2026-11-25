@@ -16,10 +16,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     // Allow Cloudflare tunnel host for development
-    allowedHosts: ['lead-combat-lots-spatial.trycloudflare.com', 'localhost', '.trycloudflare.com'],
+    allowedHosts: ['https://alike-with-accomplished-accidents.trycloudflare.com/', 'localhost', '.trycloudflare.com'],
     // Only the local dev app may make cross-origin requests to the dev server.
     cors: {
-      origin: ['http://localhost:5173', 'http://127.0.0.1:5173','http://lead-combat-lots-spatial.trycloudflare.com'],
+      origin: ['http://localhost:5173', 'http://127.0.0.1:5173','https://alike-with-accomplished-accidents.trycloudflare.com/'],
     },
     hmr: {
       protocol: 'ws',
@@ -28,7 +28,10 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        // Use 127.0.0.1 (IPv4) explicitly. On Windows "localhost" resolves to
+        // ::1 first, where a Playwright MCP server can occupy port 3001 and
+        // intercept API requests. The backend binds to 0.0.0.0 (IPv4).
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         ws: true,
       },
