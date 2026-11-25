@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { chatApi } from '@/utils/api';
+import { notifyHistoryChanged, subscribeToHistoryChanges } from '@/utils/historyEvents';
 import { formatDistanceToNow } from 'date-fns';
 
 export function HistoryPage() {
@@ -63,11 +64,22 @@ export function HistoryPage() {
     fetchSubjects();
   }, [isAuthenticated, navigate, fetchConversations, fetchSubjects]);
 
+  // Keep the list current when a conversation is saved (possibly from another
+  // tab) or deleted, without requiring a manual refresh.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    return subscribeToHistoryChanges(() => {
+      fetchConversations();
+      fetchSubjects();
+    });
+  }, [isAuthenticated, fetchConversations, fetchSubjects]);
+
   const handleDelete = async (id) => {
     if (!confirm('Delete this conversation?')) return;
     setDeletingId(id);
     try {
       await chatApi.deleteConversation(id);
+      notifyHistoryChanged({ conversationId: id, deleted: true });
       fetchConversations();
     } finally {
       setDeletingId(null);

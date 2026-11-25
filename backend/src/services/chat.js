@@ -1,4 +1,5 @@
 import { Ollama } from 'ollama';
+import mongoose from 'mongoose';
 import { searchChunks } from './ingestion.js';
 import { Conversation, User, Memory } from '../models/index.js';
 import fetch from 'node-fetch';
@@ -1726,7 +1727,11 @@ export async function processChatQuestion(studentId, question, subject, conversa
 }
 
 export async function saveConversation(studentId, subject, messages, conversationId = null, options = {}) {
-  const { triggerSummarization = true, triggerMemoryExtraction = true } = options;
+  const {
+    triggerSummarization = true,
+    triggerMemoryExtraction = true,
+    focusTopic = null,
+  } = options;
   
   let conversation;
   
@@ -1737,6 +1742,7 @@ export async function saveConversation(studentId, subject, messages, conversatio
     if (conversation) {
       conversation.messages = messages;
       conversation.updatedAt = new Date();
+      if (focusTopic) conversation.focusTopic = focusTopic;
       // Generate meaningful title if missing or generic
       if (!conversation.title || !isMeaningfulTitle(conversation.title)) {
         conversation.title = generateConversationTitle(messages);
@@ -1746,12 +1752,19 @@ export async function saveConversation(studentId, subject, messages, conversatio
   }
 
   if (!conversation) {
-    conversation = await Conversation.create({
+    const createData = {
       studentId,
       subject,
       messages,
       title: generateConversationTitle(messages),
-    });
+    };
+    // A conversation is created lazily, so reuse the id already sent to the
+    // client instead of generating a second one.
+    if (conversationId && mongoose.isValidObjectId(conversationId)) {
+      createData._id = conversationId;
+    }
+    if (focusTopic) createData.focusTopic = focusTopic;
+    conversation = await Conversation.create(createData);
   }
 
   // Trigger summarization if needed
@@ -1853,7 +1866,10 @@ export async function confirmWebSearch(question, subject, studentProfile) {
 }
 
 export async function getConversationHistory(studentId, subject = null) {
-  const filter = { studentId };
+  // Only surface conversations that actually contain an assistant answer.
+  // Earlier versions created a document before streaming, which left empty
+  // chats (permission offers, aborted requests) in the history list.
+  const filter = { studentId, messages: { $elemMatch: { role: 'assistant' } } };
   if (subject) filter.subject = subject;
 
   const conversations = await Conversation.find(filter)

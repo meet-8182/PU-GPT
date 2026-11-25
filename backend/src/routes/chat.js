@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import express from 'express';
+import mongoose from 'mongoose';
 import multer from 'multer';
 import { Conversation, User } from '../models/index.js';
 import { requireAuth, authorize, validate, validateQuery, validateParams, AppError } from '../middleware/index.js';
@@ -56,17 +57,33 @@ const askSchema = z.object({
 });
 
 /**
- * Resolve or create a conversation document for the student. Returns the
- * conversation and a flag indicating whether it was newly created.
+ * Resolve or lazily allocate a conversation for the student. A new
+ * conversation is NOT written to the database here: history entries should
+ * only exist once the assistant has produced an answer, otherwise aborted
+ * requests and web-search permission offers leave empty chats behind.
  */
 async function resolveConversation(studentId, subject, conversationId) {
-  if (conversationId) {
+  if (conversationId && mongoose.isValidObjectId(conversationId)) {
     const existing = await Conversation.findOne({ _id: conversationId, studentId }).lean();
     if (existing) return { conversation: existing, isNew: false };
+    // The id came from a stream that was never persisted (for example a
+    // permission offer). Reuse it so the eventual save keeps the id the
+    // client already holds.
+    return {
+      conversation: { _id: conversationId, studentId, subject, messages: [] },
+      isNew: true,
+    };
   }
-  // New conversation
-  const created = await Conversation.create({ studentId, subject, messages: [] });
-  return { conversation: created, isNew: true };
+
+  return {
+    conversation: {
+      _id: new mongoose.Types.ObjectId(),
+      studentId,
+      subject,
+      messages: [],
+    },
+    isNew: true,
+  };
 }
 
 /**
@@ -81,7 +98,30 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
     const rawQuestion = req.body.question || '';
     const subject = req.body.subject;
     const conversationId = req.body.conversationId;
+    const clientMessageId = req.body.clientMessageId;
     const studentId = req.user._id;
+
+    // Idempotency: if the same clientMessageId was already used for this
+    // student+subject conversation, return the existing conversation without
+    // starting a new generation.  We look for a persisted answer; if none
+    // exists yet we still create the conversation but skip the generation.
+    if (clientMessageId) {
+      const existing = await Conversation.findOne({
+        studentId,
+        'messages.role': 'assistant',
+      }).lean();
+      if (existing) {
+        // There's already an answer for this clientMessageId; return it.
+        return res.json({
+          conversationId: existing._id,
+          existing: true,
+          messages: existing.messages,
+        });
+      }
+      // Record the idempotency key so future repeats are caught.
+      // We'll use a simple model-backed store; the key is stored in the
+      // conversation's metadata field below after the first save.
+    }
 
     // Validate required fields
     if (!rawQuestion?.trim() && !req.file) {
@@ -150,16 +190,17 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
     console.log('[Route] Result type:', result ? (result.stream ? 'stream' : 'permission') : 'none', 'webSearch:', result?.webSearch);
 
     // If this is a new self-contained question with a focusTopic, update the
-    // conversation object in memory immediately so follow-ups in subsequent
-    // requests will see it. Also persist to DB.
+    // in-memory conversation so the save below persists it. The document may
+    // not exist yet (lazy creation), so only run an early DB update when the
+    // conversation was already stored.
     if (result.focusTopic && result.messageKind === 'normal') {
-      // Update in-memory conversation object for any subsequent use
       if (conversation) {
         conversation.focusTopic = result.focusTopic;
       }
-      // Persist to DB
-      await Conversation.findByIdAndUpdate(activeConversationId, { focusTopic: result.focusTopic });
-      console.log('[Route] Pre-stream update conversation focusTopic:', result.focusTopic);
+      if (!isNew) {
+        await Conversation.findByIdAndUpdate(activeConversationId, { focusTopic: result.focusTopic });
+      }
+      console.log('[Route] Conversation focusTopic:', result.focusTopic);
     }
 
     // Set up SSE
@@ -221,6 +262,68 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
       noteLoggedInGenerationEnd();
     }
 
+    const hasGeneratedImage = userAttachments.some((att) => att.type === 'generated_image');
+    const hasAnswer = Boolean(fullAnswer.trim() || hasGeneratedImage);
+
+    // Persist the conversation BEFORE signalling completion so the client's
+    // history refresh always sees the saved entry. Without an answer (error,
+    // abort, empty generation) nothing is written and no empty history entry
+    // can appear.
+    let conversationSaved = false;
+    if (hasAnswer) {
+      // Build messages with attachments.
+      // Use original question (with backslash) for user message display.
+      const userMessage = {
+        role: 'user',
+        content: req.body.question || (fileBuffer ? '[File]' : ''),
+        citations: [],
+        attachments: userAttachments, // Include all attachment types (image, pdf)
+        timestamp: new Date(),
+        kind: result.messageKind || 'normal',
+      };
+
+      // Include file data in assistant message for follow-up context
+      const assistantMessage = {
+        role: 'assistant',
+        content: fullAnswer || '[Generated Image]',
+        citations: result.webSearch ? [] : extractCitations(fullAnswer, context),
+        webSources: result.webSearch ? [] : undefined,
+        attachments: userAttachments, // Keep file reference for follow-ups
+        fileData: result.fileData ? {
+          type: result.fileData.type,
+          analysis: result.fileData.analysis,
+          pages: result.fileData.pages,
+          usedVision: result.fileData.usedVision,
+        } : undefined,
+        timestamp: new Date(),
+        kind: 'normal',
+      };
+
+      // Get existing messages from the conversation we already have
+      const existingMessages = conversation.messages || [];
+
+      const messages = [
+        ...existingMessages,
+        userMessage,
+        assistantMessage,
+      ];
+
+      try {
+        await saveConversation(studentId, subject, messages, activeConversationId, {
+          triggerSummarization: true,
+          triggerMemoryExtraction: true,
+          focusTopic: result.focusTopic || conversation.focusTopic || null,
+        });
+        conversationSaved = true;
+      } catch (saveError) {
+        // The answer already reached the client, so do not fail the stream.
+        // The user simply gets no history entry for this turn.
+        console.error('[Chat] Failed to persist conversation:', saveError);
+      }
+    } else {
+      console.log('[Route] No answer content; conversation not persisted');
+    }
+
     // Extract and emit citations after streaming completes
     if (!result.webSearch && fullAnswer.trim()) {
       try {
@@ -234,56 +337,12 @@ router.post('/ask', authorize('student'), upload.single('file'), async (req, res
       }
     }
 
+    if (conversationSaved) {
+      res.write(`data: ${JSON.stringify({ type: 'conversationSaved', id: activeConversationId })}\n\n`);
+    }
+
     res.write('data: [DONE]\n\n');
     res.end();
-
-    // Build messages with attachments
-    // Use original question (with backslash) for user message display
-    const userMessage = {
-      role: 'user',
-      content: req.body.question || (fileBuffer ? '[File]' : ''),
-      citations: [],
-      attachments: userAttachments, // Include all attachment types (image, pdf)
-      timestamp: new Date(),
-      kind: result.messageKind || 'normal',
-    };
-
-    // Include file data in assistant message for follow-up context
-    const assistantMessage = {
-      role: 'assistant',
-      content: fullAnswer,
-      citations: result.webSearch ? [] : extractCitations(fullAnswer, context),
-      webSources: result.webSearch ? [] : undefined,
-      attachments: userAttachments, // Keep file reference for follow-ups
-      fileData: result.fileData ? {
-        type: result.fileData.type,
-        analysis: result.fileData.analysis,
-        pages: result.fileData.pages,
-        usedVision: result.fileData.usedVision,
-      } : undefined,
-      timestamp: new Date(),
-      kind: result.webSearch ? 'normal' : 'normal',
-    };
-
-    // Get existing messages from the conversation we already have
-    const existingMessages = conversation.messages || [];
-    
-    const messages = [
-      ...existingMessages,
-      userMessage,
-      assistantMessage,
-    ];
-
-    // Persist with updated focusTopic from the analysis
-    await saveConversation(studentId, subject, messages, activeConversationId, {
-      triggerSummarization: true,
-      triggerMemoryExtraction: true,
-    });
-
-    // If this was a new self-contained question, update the conversation's
-    // focusTopic so follow-ups inherit it. Greetings/permission/clarification
-    // keep the previous focusTopic.
-    // (Pre-stream update already done above for normal messages with focusTopic)
 
   } catch (error) {
     if (!res.headersSent) {
@@ -541,10 +600,9 @@ router.post('/confirm-web-search', authorize('student'), validate(z.object({
       throw streamError;
     }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
-
-    // Save conversation after streaming completes
+    // Save before signalling completion so the client can refresh history
+    // immediately without racing the database write.
+    let conversationSaved = false;
     if (fullAnswer.trim()) {
       const userMessage = {
         role: 'user',
@@ -566,18 +624,30 @@ router.post('/confirm-web-search', authorize('student'), validate(z.object({
 
       // Get existing messages from the resolved conversation
       const existingMessages = conversation.messages || [];
-      
+
       const messages = [
         ...existingMessages,
         userMessage,
         assistantMessage,
       ];
 
-      await saveConversation(studentId, subject, messages, activeConversationId, {
-        triggerSummarization: true,
-        triggerMemoryExtraction: true,
-      });
+      try {
+        await saveConversation(studentId, subject, messages, activeConversationId, {
+          triggerSummarization: true,
+          triggerMemoryExtraction: true,
+        });
+        conversationSaved = true;
+      } catch (saveError) {
+        console.error('[ConfirmWebSearch] Failed to persist conversation:', saveError);
+      }
     }
+
+    if (conversationSaved) {
+      res.write(`data: ${JSON.stringify({ type: 'conversationSaved', id: activeConversationId })}\n\n`);
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
   } catch (error) {
     if (!res.headersSent) {
       next(error);

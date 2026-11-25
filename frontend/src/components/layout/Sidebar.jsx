@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   History,
@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { chatApi } from '@/utils/api';
+import { subscribeToHistoryChanges } from '@/utils/historyEvents';
 
 const studentNavItems = [
   { path: '/history', label: 'History', icon: History },
@@ -51,30 +52,36 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
   const [recentConversations, setRecentConversations] = useState([]);
   const [recentLoading, setRecentLoading] = useState(false);
   const [recentError, setRecentError] = useState(null);
-  const [fetched, setFetched] = useState(false);
+  const hasLoadedRecentRef = useRef(false);
 
-  // Fetch recent conversations for dropdown (only once on mount)
+  // Fetch recent conversations for the dropdown. Background refreshes (after a
+  // new answer is saved) keep the current list visible instead of flashing a
+  // spinner.
   const fetchRecentConversations = useCallback(async () => {
-    if (!isStudent || fetched) return;
-    setRecentLoading(true);
+    if (!isStudent) return;
+    if (!hasLoadedRecentRef.current) setRecentLoading(true);
     setRecentError(null);
     try {
       const res = await chatApi.history({ limit: 5, page: 1 });
       setRecentConversations(res.data.conversations || []);
-      setFetched(true);
+      hasLoadedRecentRef.current = true;
     } catch (err) {
       console.error('Failed to fetch recent conversations:', err);
-      setRecentError('Failed to load recent chats');
+      if (!hasLoadedRecentRef.current) {
+        setRecentError('Failed to load recent chats');
+      }
     } finally {
       setRecentLoading(false);
     }
-  }, [isStudent, fetched]);
+  }, [isStudent]);
 
-  // Fetch on mount
+  // Fetch on mount and refresh whenever a conversation is saved or deleted.
   useEffect(() => {
-    if (isStudent) {
+    if (!isStudent) return;
+    fetchRecentConversations();
+    return subscribeToHistoryChanges(() => {
       fetchRecentConversations();
-    }
+    });
   }, [isStudent, fetchRecentConversations]);
 
   const handleNewChat = () => {
