@@ -43,12 +43,13 @@ export const documentApi = {
 export const chatApi = {
   /** Ask a question - supports both text and image upload */
   ask: (params, signal) => {
-    const { question, subject, conversationId, file } = params;
+    const { question, subject, conversationId, file, clientMessageId } = params;
     const formData = new FormData();
     formData.append('question', question || '');
     formData.append('subject', subject);
     if (conversationId) formData.append('conversationId', conversationId);
     if (file) formData.append('file', file);
+    if (clientMessageId) formData.append('clientMessageId', clientMessageId);
     // No isWebSearch flag - backend detects leading backslash
     return fetch('/api/chat/ask', {
       method: 'POST',

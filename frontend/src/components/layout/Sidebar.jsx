@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { chatApi } from '@/utils/api';
+import { subscribeToHistoryChanges } from '@/utils/historyEvents';
 
 const studentNavItems = [
   { path: '/history', label: 'History', icon: History },
@@ -52,27 +53,20 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
   const [recentConversations, setRecentConversations] = useState([]);
   const [recentLoading, setRecentLoading] = useState(false);
   const [recentError, setRecentError] = useState(null);
-  const [deletingId, setDeletingId] = useState(null);
-  const recentRequestRef = useRef(0);
+  const [fetched, setFetched] = useState(false);
 
-  // Refresh recent conversations whenever history changes. This used to run
-  // only once on mount, so a brand-new chat never appeared until a reload.
+  // Fetch recent conversations for dropdown (only once on mount)
   const fetchRecentConversations = useCallback(async () => {
-    if (!isStudent) return;
-    const requestId = recentRequestRef.current + 1;
-    recentRequestRef.current = requestId;
+    if (!isStudent || fetched) return;
     setRecentLoading(true);
     setRecentError(null);
     try {
       const res = await chatApi.history({ limit: 5, page: 1 });
-      if (recentRequestRef.current === requestId) {
-        setRecentConversations(res.data.conversations || []);
-      }
+      setRecentConversations(res.data.conversations || []);
+      setFetched(true);
     } catch (err) {
       console.error('Failed to fetch recent conversations:', err);
-      if (recentRequestRef.current === requestId) {
-        setRecentError('Failed to load recent chats');
-      }
+      setRecentError('Failed to load recent chats');
     } finally {
       if (recentRequestRef.current === requestId) {
         setRecentLoading(false);
@@ -80,12 +74,11 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
     }
   }, [isStudent]);
 
+  // Fetch on mount
   useEffect(() => {
-    if (!isStudent) return undefined;
-    fetchRecentConversations();
-    const handleHistoryUpdated = () => fetchRecentConversations();
-    window.addEventListener('pu:history-updated', handleHistoryUpdated);
-    return () => window.removeEventListener('pu:history-updated', handleHistoryUpdated);
+    if (isStudent) {
+      fetchRecentConversations();
+    }
   }, [isStudent, fetchRecentConversations]);
 
   // Refresh when the student navigates (e.g. back from a chat or History).

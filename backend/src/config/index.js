@@ -86,6 +86,32 @@ export const config = {
   guestMaxOutputTokens: parseInt(process.env.GUEST_MAX_OUTPUT_TOKENS) || 400,
   guestMaxMessageChars: parseInt(process.env.GUEST_MAX_MESSAGE_CHARS) || 500,
   guestMaxHistoryTurns: parseInt(process.env.GUEST_MAX_HISTORY_TURNS) || 3,
+
+  // === Sampling & output‑limit settings for logged‑in chat generations ===
+  // Temperature controls randomness; 0 = greedy, 0.3‑0.7 is a good range.
+  temperature: parseFloat(process.env.OLLAMA_TEMPERATURE) || 0.3,
+  // top_p (nucleus sampling) keeps the smallest tokens whose cumulative
+  // probability exceeds this value; 0.9 is a safe default.
+  top_p: parseFloat(process.env.OLLAMA_TOP_P) || 0.9,
+  // repeat_penalty penalises tokens that already appeared; ~1.1‑1.2 helps break loops.
+  repeat_penalty: parseFloat(process.env.OLLAMA_REPEAT_PENALTY) || 1.15,
+  // repeat_last_n how far back to look for repeats; 256 is a good default for chunked context.
+  repeat_last_n: parseInt(process.env.OLLAMA_REPEAT_LAST_N) || 256,
+
+  // Per‑intent output‑token caps so a short “factoid” answer doesn’t unnecessarily
+  // consume the full budget and trigger a cutoff mid‑sentence.
+  intentOutputLimits: {
+    // key: substring of the subject name that identifies the intent
+    short:       parseInt(process.env.INTENT_OUTPUT_LIMIT_SHORT) || 300,   // e.g. "QuickFact"
+    normal:      parseInt(process.env.INTENT_OUTPUT_LIMIT_NORMAL) || 700,   // default chat
+    detailed:    parseInt(process.env.INTENT_OUTPUT_LIMIT_DETAILED) || 1200, // code / deep explanations
+    code:        parseInt(process.env.INTENT_OUTPUT_LIMIT_CODE) || 1500,     // code + explanation
+  },
+
+  // Maximum prompt + completion context tokens.  Leaving room for the system prompt,
+  // a short question, and the chosen output limit prevents the model from hitting
+  // its ctx window and getting cut off.
+  maxPromptTokens: parseInt(process.env.MAX_PROMPT_TOKENS) || 2800,
   guestUnansweredLog: parseBool(process.env.GUEST_UNANSWERED_LOG, false),
   captchaProvider: process.env.CAPTCHA_PROVIDER || '',
   captchaSiteKey: process.env.CAPTCHA_SITE_KEY || '',
