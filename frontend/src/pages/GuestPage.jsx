@@ -1,17 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, Send, Loader2, AlertCircle, ThumbsUp, ThumbsDown, Check } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowUp,
+  BookOpen,
+  Check,
+  Info,
+  RefreshCw,
+  Sparkles,
+  ThumbsDown,
+  ThumbsUp,
+} from 'lucide-react';
+import { Orb } from '@yogesharc/thinking-orbs';
 import { guestApi } from '@/utils/api';
 import { MessageRenderer } from '@/components/ui/MessageRenderer';
 
 const MAX_MESSAGE_CHARS = 500;
-
-function formatDate(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-}
+const TYPING_TEXT = 'Ask about Parul University';
+const TYPING_PLAIN = 'Ask about ';
+const TYPING_ACCENT = 'Parul University';
 
 function friendlyError(code, fallback) {
   if (code === 'GUEST_RATE_LIMITED') {
@@ -29,6 +36,74 @@ function friendlyError(code, fallback) {
   return fallback || 'Something went wrong. Please try again.';
 }
 
+/**
+ * Types the heading once on mount. The full text is rendered invisibly first so
+ * the block reserves its final size, which keeps the subtitle steady and lets
+ * the caret type left-to-right inside a centred heading.
+ */
+function TypingHeading() {
+  const [visible, setVisible] = useState(0);
+  const [finished, setFinished] = useState(false);
+  const [caretGone, setCaretGone] = useState(false);
+
+  useEffect(() => {
+    const reduceMotion =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (reduceMotion) {
+      setVisible(TYPING_TEXT.length);
+      setFinished(true);
+      setCaretGone(true);
+      return undefined;
+    }
+
+    let index = 0;
+    let stepTimer;
+    let finishTimer;
+
+    const step = () => {
+      index += 1;
+      setVisible(index);
+      if (index < TYPING_TEXT.length) {
+        stepTimer = setTimeout(step, 52);
+      } else {
+        setFinished(true);
+        finishTimer = setTimeout(() => setCaretGone(true), 420);
+      }
+    };
+
+    const startTimer = setTimeout(step, 260);
+
+    return () => {
+      clearTimeout(startTimer);
+      clearTimeout(stepTimer);
+      clearTimeout(finishTimer);
+    };
+  }, []);
+
+  const typed = TYPING_TEXT.slice(0, visible);
+
+  return (
+    <h1 className="pu-hero-title" aria-label={TYPING_TEXT}>
+      <span className="pu-typing-wrap" aria-hidden="true">
+        <span className="pu-typing-ghost">
+          {TYPING_PLAIN}
+          <span className="pu-typing-accent">{TYPING_ACCENT}</span>
+        </span>
+        <span className="pu-typing-live">
+          {typed.slice(0, TYPING_PLAIN.length)}
+          <span className="pu-typing-accent">{typed.slice(TYPING_PLAIN.length)}</span>
+          {!caretGone && (
+            <span className={`pu-typing-caret${finished ? ' is-done' : ''}`} />
+          )}
+        </span>
+      </span>
+    </h1>
+  );
+}
+
 export function GuestPage() {
   const [infoStatus, setInfoStatus] = useState(null);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -44,7 +119,7 @@ export function GuestPage() {
   const [feedbackSent, setFeedbackSent] = useState({});
 
   const abortRef = useRef(null);
-  const bottomRef = useRef(null);
+  const threadRef = useRef(null);
   const inputRef = useRef(null);
 
   const loadStatus = useCallback(async () => {
@@ -66,8 +141,40 @@ export function GuestPage() {
   }, [loadStatus]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    const el = threadRef.current;
+    if (!el) return;
+    el.scrollTo({
+      top: el.scrollHeight,
+      behavior: streamingText ? 'auto' : 'smooth',
+    });
   }, [messages, streamingText, sending]);
+
+  const resizeInput = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }, []);
+
+  useEffect(() => {
+    resizeInput();
+  }, [input, resizeInput]);
+
+  // Re-measure once after the first paint so the textarea's initial height is
+  // based on the settled layout (fonts + width) instead of the placeholder's
+  // pre-layout wrap.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => resizeInput());
+    return () => cancelAnimationFrame(frame);
+  }, [resizeInput]);
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = 'PU-GPT — Ask about Parul University';
+    return () => {
+      document.title = previousTitle;
+    };
+  }, []);
 
   const history = useMemo(() => {
     const turns = messages
@@ -202,97 +309,88 @@ export function GuestPage() {
   };
 
   const hasApprovedInfo = Boolean(infoStatus?.hasApprovedInfo);
-  const lastReviewed = formatDate(infoStatus?.latestLastReviewed);
+  const chatReady = hasApprovedInfo && !statusLoading && !statusError;
+  const contactBlock = infoStatus?.contactBlock || '';
 
   return (
-    <div className="min-h-screen flex flex-col bg-chalkboard text-chalk">
-      <header className="sticky top-0 z-10 border-b border-rule-line bg-chalkboard/95 backdrop-blur">
-        <div className="max-w-3xl mx-auto flex items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-9 h-9 rounded-lg bg-amber-chalk flex items-center justify-center flex-shrink-0">
-              <BookOpen className="w-5 h-5 text-pu-cream" />
-            </div>
-            <div className="min-w-0">
-              <p className="font-display font-medium text-lg leading-tight">PU-GPT</p>
-              <p className="text-xs text-chalk/60 truncate">About Parul University</p>
-            </div>
-          </div>
-          <Link
-            to="/login"
-            className="px-3 py-1.5 rounded-lg border border-amber-chalk/40 text-amber-chalk text-sm font-medium hover:bg-amber-chalk/10 transition-colors"
-          >
-            Log in
-          </Link>
-        </div>
+    <div className="pu-landing">
+      <header className="pu-landing-header">
+        <Link to="/" className="pu-landing-brand" aria-label="PU-GPT home">
+          <span className="pu-landing-brand-mark" aria-hidden="true">
+            <BookOpen />
+          </span>
+          <span className="pu-landing-brand-text">
+            <span className="pu-landing-brand-title">PU-GPT</span>
+            <span className="pu-landing-brand-sub">About Parul University</span>
+          </span>
+        </Link>
+
+        <Link to="/login" className="pu-landing-login">
+          Log in
+        </Link>
       </header>
 
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-4 py-6">
-          {statusLoading && (
-            <div className="flex items-center justify-center py-16 text-chalk/60">
-              <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading university information…
-            </div>
-          )}
+      <main className="pu-landing-main">
+        <section className="pu-landing-hero">
+          <span className="pu-chat-orb" aria-hidden="true">
+            <Orb state="idle" size={56} speed={0.9} density={1.2} />
+          </span>
 
-          {statusError && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-rust/40 bg-rust/10 text-rust text-sm">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <span>{statusError}</span>
-            </div>
-          )}
+          <TypingHeading />
 
-          {!statusLoading && !statusError && !hasApprovedInfo && (
-            <div className="rounded-xl border border-rule-line bg-pu-panel p-5">
-              <h1 className="font-display text-xl mb-2">University information is being prepared</h1>
-              <p className="text-sm text-chalk/70 mb-4">
-                No approved university information is available yet. Please contact the university directly:
-              </p>
-              <div className="rounded-lg bg-chalkboard/60 border border-rule-line p-4 text-sm whitespace-pre-line text-chalk/90">
-                {infoStatus?.contactBlock}
+          <p className="pu-chat-subtitle">
+            Your AI guide for everything about Parul University
+          </p>
+        </section>
+
+        <section className="pu-conversation" ref={threadRef}>
+          <div className="pu-conversation-inner">
+            {statusLoading && (
+              <div className="pu-chat-status" role="status" aria-live="polite">
+                <span className="pu-chat-status-dot" aria-hidden="true" />
+                Loading university information…
               </div>
-              <p className="text-xs text-chalk/50 mt-4">
-                <Link to="/login" className="text-amber-chalk underline">Log in</Link> to ask about your course subjects.
-              </p>
-            </div>
-          )}
+            )}
 
-          {!statusLoading && !statusError && hasApprovedInfo && messages.length === 0 && !sending && (
-            <div className="text-center py-8">
-              <h1 className="font-display text-2xl sm:text-3xl mb-2">Ask about Parul University</h1>
-              <p className="text-chalk/60 text-sm max-w-lg mx-auto">
-                Answers come only from university information approved by Parul University staff.
-                {lastReviewed ? ` Last reviewed ${lastReviewed}.` : ''}
-              </p>
-              {infoStatus?.suggestedChips?.length > 0 && (
-                <div className="flex flex-wrap justify-center gap-2 mt-6">
-                  {infoStatus.suggestedChips.map((chip) => (
-                    <button
-                      key={chip.label}
-                      type="button"
-                      onClick={() => sendMessage(chip.message)}
-                      className="px-3 py-2 rounded-full border border-amber-chalk/30 bg-amber-chalk/5 text-sm text-chalk/90 hover:bg-amber-chalk/15 transition-colors"
-                    >
-                      {chip.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+            {statusError && (
+              <div className="pu-chat-alert" role="alert">
+                <AlertCircle aria-hidden="true" />
+                <span>{statusError}</span>
+                <button type="button" className="pu-chat-alert-action" onClick={loadStatus}>
+                  <RefreshCw aria-hidden="true" />
+                  Retry
+                </button>
+              </div>
+            )}
 
-          {messages.length > 0 && (
-            <div className="space-y-5">
-              {messages.map((message, index) => (
-                <div key={index} className={message.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-                  <div
-                    className={
-                      message.role === 'user'
-                        ? 'max-w-[85%] rounded-2xl rounded-br-sm bg-amber-chalk/20 border border-amber-chalk/30 px-4 py-2.5'
-                        : 'w-full rounded-2xl rounded-bl-sm bg-pu-panel border border-rule-line px-4 py-3'
-                    }
-                  >
+            {!statusLoading && !statusError && !hasApprovedInfo && (
+              <div className="pu-chat-noinfo">
+                <span className="pu-chat-noinfo-icon" aria-hidden="true">
+                  <Info />
+                </span>
+                <h2>University information is being prepared</h2>
+                <p>
+                  No approved university information is available yet. Please contact the
+                  university directly:
+                </p>
+                {contactBlock && <div className="pu-chat-contact">{contactBlock}</div>}
+                <p className="pu-chat-noinfo-foot">
+                  <Link to="/login">Log in</Link> to ask about your course subjects.
+                </p>
+              </div>
+            )}
+
+            {messages.map((message, index) => (
+              <article key={index} className={`pu-chat-msg ${message.role}`}>
+                {message.role === 'assistant' && (
+                  <span className="pu-chat-avatar" aria-hidden="true">
+                    <Sparkles />
+                  </span>
+                )}
+                <div className="pu-chat-msg-body">
+                  <div className={`pu-chat-bubble ${message.role}`}>
                     {message.role === 'user' ? (
-                      <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                      <p className="pu-chat-user-text">{message.content}</p>
                     ) : (
                       <>
                         <MessageRenderer
@@ -300,101 +398,146 @@ export function GuestPage() {
                           citations={message.citations || []}
                           sourcesLabel="Sources (University Information)"
                         />
-                        <div className="mt-3 pt-2 border-t border-rule-line flex items-center gap-2">
-                          <span className="text-xs text-chalk/50">Was this helpful?</span>
+                        <div className="pu-chat-feedback">
+                          <span>Was this helpful?</span>
                           <button
                             type="button"
                             onClick={() => handleFeedback(index, 'up')}
-                            className="p-1.5 rounded hover:bg-chalk/10 text-chalk/60 hover:text-sage transition-colors"
                             aria-label="Helpful"
+                            aria-pressed={feedbackSent[index] === 'up'}
                           >
-                            {feedbackSent[index] === 'up' ? <Check className="w-4 h-4 text-sage" /> : <ThumbsUp className="w-4 h-4" />}
+                            {feedbackSent[index] === 'up' ? (
+                              <Check aria-hidden="true" />
+                            ) : (
+                              <ThumbsUp aria-hidden="true" />
+                            )}
                           </button>
                           <button
                             type="button"
                             onClick={() => handleFeedback(index, 'down')}
-                            className="p-1.5 rounded hover:bg-chalk/10 text-chalk/60 hover:text-rust transition-colors"
                             aria-label="Not helpful"
+                            aria-pressed={feedbackSent[index] === 'down'}
                           >
-                            {feedbackSent[index] === 'down' ? <Check className="w-4 h-4 text-rust" /> : <ThumbsDown className="w-4 h-4" />}
+                            {feedbackSent[index] === 'down' ? (
+                              <Check aria-hidden="true" />
+                            ) : (
+                              <ThumbsDown aria-hidden="true" />
+                            )}
                           </button>
                         </div>
                       </>
                     )}
                   </div>
                 </div>
-              ))}
+              </article>
+            ))}
 
-              {sending && (
-                <div className="flex justify-start">
-                  <div className="w-full rounded-2xl rounded-bl-sm bg-pu-panel border border-rule-line px-4 py-3">
-                    {streamingText ? (
+            {sending && (
+              <article className="pu-chat-msg assistant pu-chat-streaming">
+                <span className="pu-chat-avatar" aria-hidden="true">
+                  <Sparkles />
+                </span>
+                <div className="pu-chat-msg-body">
+                  <div className="pu-chat-bubble assistant">
+                    <div
+                      className={`pu-orb-loading${streamingText ? ' is-hiding' : ''}`}
+                      role="status"
+                      aria-live="polite"
+                      aria-hidden={streamingText ? 'true' : undefined}
+                    >
+                      <Orb
+                        state="compacting"
+                        size={72}
+                        speed={1.2}
+                        density={1.5}
+                        label="Searching"
+                        className="pu-orb-anim"
+                      />
+                      <span className="pu-orb-label">
+                        Searching
+                        <span className="pu-orb-dots" aria-hidden="true">
+                          <span className="pu-orb-dot">.</span>
+                          <span className="pu-orb-dot">.</span>
+                          <span className="pu-orb-dot">.</span>
+                        </span>
+                      </span>
+                      {statusText && (
+                        <span className="pu-chat-orb-status">{statusText}</span>
+                      )}
+                    </div>
+                    {streamingText && (
                       <MessageRenderer
                         content={streamingText}
                         citations={streamingCitations}
                         sourcesLabel="Sources (University Information)"
                       />
-                    ) : (
-                      <div className="flex items-center gap-2 text-sm text-chalk/60">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        {statusText || 'Checking approved university information…'}
-                      </div>
                     )}
                   </div>
                 </div>
-              )}
-              <div ref={bottomRef} />
-            </div>
-          )}
+              </article>
+            )}
+          </div>
+        </section>
 
+        <div className="pu-composer-zone">
           {error && (
-            <div className="mt-4 flex items-start gap-2 p-3 rounded-lg border border-rust/40 bg-rust/10 text-rust text-sm" role="alert">
-              <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-              <div className="flex-1">{error}</div>
-              <button type="button" onClick={() => setError('')} className="text-rust/70 hover:text-rust" aria-label="Dismiss error">
-                ×
+            <div className="pu-chat-alert" role="alert">
+              <AlertCircle aria-hidden="true" />
+              <span>{error}</span>
+              <button
+                type="button"
+                className="pu-chat-alert-action"
+                onClick={() => setError('')}
+                aria-label="Dismiss error"
+              >
+                Dismiss
               </button>
             </div>
           )}
-        </div>
-      </main>
 
-      <footer className="border-t border-rule-line bg-chalkboard">
-        <div className="max-w-3xl mx-auto px-4 py-3">
-          <form onSubmit={handleSubmit} className="flex items-end gap-2">
-            <div className="flex-1">
-              <label htmlFor="guest-message" className="sr-only">Ask about Parul University</label>
+          <form onSubmit={handleSubmit} className="pu-chat-form">
+            <label htmlFor="pu-landing-message" className="sr-only">
+              Ask about Parul University
+            </label>
+            <div className={`pu-chat-input-shell${sending ? ' is-busy' : ''}`}>
               <textarea
-                id="guest-message"
+                id="pu-landing-message"
                 ref={inputRef}
                 value={input}
                 onChange={(event) => setInput(event.target.value.slice(0, MAX_MESSAGE_CHARS))}
                 onKeyDown={handleKeyDown}
                 rows={1}
                 maxLength={MAX_MESSAGE_CHARS}
-                placeholder={hasApprovedInfo ? 'Ask about admissions, fees, hostel…' : 'University information is not available yet'}
-                disabled={sending || !hasApprovedInfo}
-                className="w-full resize-none rounded-xl border border-rule-line bg-pu-panel px-3 py-2.5 text-sm text-chalk placeholder:text-chalk/40 focus:outline-none focus:border-amber-chalk/60 disabled:opacity-60"
+                placeholder={
+                  chatReady
+                    ? 'Ask about admissions, fees, hostel...'
+                    : 'University information is not available yet'
+                }
+                disabled={sending || !chatReady}
+                className="pu-chat-textarea"
+                aria-describedby="pu-landing-count"
               />
-              <div className="flex justify-between mt-1 text-[11px] text-chalk/40">
-                <span>Chats are not saved.</span>
-                <span>{input.length}/{MAX_MESSAGE_CHARS}</span>
-              </div>
+              <button
+                type="submit"
+                disabled={sending || !input.trim() || !chatReady}
+                className={`pu-chat-send${sending ? ' is-busy' : ''}`}
+                aria-label="Send question"
+              >
+                <ArrowUp aria-hidden="true" />
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={sending || !input.trim() || !hasApprovedInfo}
-              className="mb-5 w-10 h-10 rounded-xl bg-amber-chalk text-pu-cream flex items-center justify-center disabled:opacity-40 hover:brightness-110 transition"
-              aria-label="Send question"
-            >
-              {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            </button>
+
+            <div className="pu-chat-composer-meta">
+              <span
+                id="pu-landing-count"
+                className={`pu-chat-count${input.length > MAX_MESSAGE_CHARS - 50 ? ' is-near' : ''}`}
+              >
+                {input.length}/{MAX_MESSAGE_CHARS}
+              </span>
+            </div>
           </form>
-          <p className="text-[11px] text-chalk/50 mt-1">
-            {infoStatus?.disclaimer}
-          </p>
         </div>
-      </footer>
+      </main>
     </div>
   );
 }

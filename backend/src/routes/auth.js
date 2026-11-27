@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { User } from '../models/index.js';
+import { User, Department } from '../models/index.js';
 import {
   requireAuth,
   generateToken,
@@ -11,6 +11,7 @@ import {
   getLoginLockout,
   recordLoginFailure,
   clearLoginFailures,
+  AppError,
 } from '../middleware/index.js';
 
 const router = express.Router();
@@ -41,6 +42,12 @@ const publicUser = (user) => ({
   role: user.role,
   department: user.department,
   subjects: user.subjects,
+  college: user.college,
+  program: user.program,
+  fieldCategory: user.fieldCategory,
+  field: user.field,
+  semester: user.semester,
+  memoryEnabled: user.memoryEnabled,
 });
 
 router.post('/register', registerRateLimit, validate(registerSchema), async (req, res, next) => {
@@ -110,6 +117,63 @@ router.post('/login', loginRateLimit, validate(loginSchema), async (req, res, ne
       user: publicUser(user),
       token,
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const profileSchema = z.object({
+  department: z.string().trim().max(100).optional(),
+  semester: z.string().trim().max(20).optional(),
+  college: z.string().trim().max(200).optional(),
+  program: z.enum(['diploma', 'btech', 'mtech']).optional(),
+  fieldCategory: z.string().trim().max(100).optional(),
+  field: z.string().trim().max(100).optional(),
+}).strict();
+
+// Departments available to the signed-in student. Reuses the Department model
+// and values already assigned to users; no separate department store.
+router.get('/departments', requireAuth, async (req, res, next) => {
+  try {
+    const [stored, assigned] = await Promise.all([
+      Department.find().select('name').lean(),
+      User.distinct('department', { department: { $nin: [null, ''] } }),
+    ]);
+    const departments = [...new Set([
+      ...stored.map((department) => department.name),
+      ...assigned,
+    ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
+
+    res.set('Cache-Control', 'no-store');
+    res.json({ departments });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Update the student's own profile fields. Only the allowlisted fields in
+// profileSchema can be changed, and the account id always comes from the token.
+router.patch('/profile', requireAuth, validate(profileSchema), async (req, res, next) => {
+  try {
+    const updates = {};
+    for (const key of ['department', 'semester', 'college', 'program', 'fieldCategory', 'field']) {
+      if (req.body[key] !== undefined) updates[key] = req.body[key];
+    }
+
+    if (Object.keys(updates).length === 0) {
+      throw new AppError('No profile fields provided', 400);
+    }
+
+    updates.updatedAt = new Date();
+    const user = await User.findByIdAndUpdate(
+      req.user._id,
+      { $set: updates },
+      { new: true, runValidators: true }
+    );
+    if (!user) throw new AppError('User not found', 404);
+
+    res.set('Cache-Control', 'no-store');
+    res.json({ user: publicUser(user) });
   } catch (error) {
     next(error);
   }

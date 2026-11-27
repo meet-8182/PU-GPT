@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   History,
@@ -17,6 +17,7 @@ import {
   Database,
   LayoutDashboard,
   GraduationCap,
+  Trash2,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { chatApi } from '@/utils/api';
@@ -51,34 +52,73 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
   const [recentConversations, setRecentConversations] = useState([]);
   const [recentLoading, setRecentLoading] = useState(false);
   const [recentError, setRecentError] = useState(null);
-  const [fetched, setFetched] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const recentRequestRef = useRef(0);
 
-  // Fetch recent conversations for dropdown (only once on mount)
+  // Refresh recent conversations whenever history changes. This used to run
+  // only once on mount, so a brand-new chat never appeared until a reload.
   const fetchRecentConversations = useCallback(async () => {
-    if (!isStudent || fetched) return;
+    if (!isStudent) return;
+    const requestId = recentRequestRef.current + 1;
+    recentRequestRef.current = requestId;
     setRecentLoading(true);
     setRecentError(null);
     try {
       const res = await chatApi.history({ limit: 5, page: 1 });
-      setRecentConversations(res.data.conversations || []);
-      setFetched(true);
+      if (recentRequestRef.current === requestId) {
+        setRecentConversations(res.data.conversations || []);
+      }
     } catch (err) {
       console.error('Failed to fetch recent conversations:', err);
-      setRecentError('Failed to load recent chats');
+      if (recentRequestRef.current === requestId) {
+        setRecentError('Failed to load recent chats');
+      }
     } finally {
-      setRecentLoading(false);
+      if (recentRequestRef.current === requestId) {
+        setRecentLoading(false);
+      }
     }
-  }, [isStudent, fetched]);
+  }, [isStudent]);
 
-  // Fetch on mount
   useEffect(() => {
-    if (isStudent) {
-      fetchRecentConversations();
-    }
+    if (!isStudent) return undefined;
+    fetchRecentConversations();
+    const handleHistoryUpdated = () => fetchRecentConversations();
+    window.addEventListener('pu:history-updated', handleHistoryUpdated);
+    return () => window.removeEventListener('pu:history-updated', handleHistoryUpdated);
   }, [isStudent, fetchRecentConversations]);
+
+  // Refresh when the student navigates (e.g. back from a chat or History).
+  useEffect(() => {
+    if (isStudent) fetchRecentConversations();
+  }, [isStudent, location.pathname, location.search, fetchRecentConversations]);
 
   const handleNewChat = () => {
     navigate('/ask?new=true', { replace: true });
+  };
+
+  const handleDeleteConversation = async (conversationId, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!window.confirm('Delete this conversation?')) return;
+    setDeletingId(conversationId);
+    // Remove it from the dropdown immediately; restore on failure.
+    const previous = recentConversations;
+    setRecentConversations((items) => items.filter((item) => item.id !== conversationId));
+    try {
+      await chatApi.deleteConversation(conversationId);
+      const urlParams = new URLSearchParams(location.search);
+      if (urlParams.get('conversation') === conversationId) {
+        navigate('/ask?new=true', { replace: true });
+      }
+      window.dispatchEvent(new Event('pu:history-updated'));
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+      setRecentConversations(previous);
+      setRecentError('Failed to delete conversation');
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   const handleHistoryArrowClick = (e) => {
@@ -208,22 +248,40 @@ export function Sidebar({ collapsed = false, onCollapseChange }) {
                               const urlParams = new URLSearchParams(location.search);
                               const isActiveConv = urlParams.get('conversation') === conv.id;
                               return (
-                                <button
+                                <div
                                   key={conv.id}
-                                  onClick={(e) => handleConversationClick(conv.id, e)}
-                                  role="menuitem"
-                                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors w-full text-left ${
+                                  className={`group flex items-center gap-1 rounded-lg transition-colors ${
                                     isActiveConv
                                       ? 'bg-pu-accent text-pu-cream'
                                       : 'text-chalk/70 hover:text-chalk hover:bg-black/10'
                                   }`}
-                                  title={conv.title || 'Untitled conversation'}
                                 >
-                                  <MessageSquare className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
-                                  <span className="truncate flex-1">
-                                    {conv.title || 'Untitled conversation'}
-                                  </span>
-                                </button>
+                                  <button
+                                    onClick={(e) => handleConversationClick(conv.id, e)}
+                                    role="menuitem"
+                                    className="flex items-center gap-2 px-3 py-2 text-sm w-full text-left min-w-0"
+                                    title={conv.title || 'Untitled conversation'}
+                                  >
+                                    <MessageSquare className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+                                    <span className="truncate flex-1">
+                                      {conv.title || 'Untitled conversation'}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleDeleteConversation(conv.id, e)}
+                                    disabled={deletingId === conv.id}
+                                    className="mr-1 p-1.5 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-rust/15 hover:text-rust transition-opacity flex-shrink-0"
+                                    aria-label={`Delete ${conv.title || 'conversation'}`}
+                                    title="Delete conversation"
+                                  >
+                                    {deletingId === conv.id ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                </div>
                               );
                             })}
                           <button

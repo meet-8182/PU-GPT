@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useSearchParams } from 'react-router-dom';
-import { Send, Loader2, AlertCircle, Check, FileText, Image, X, Edit2, Plus, X as XIcon, RefreshCw, History, Mic, Sparkles, ArrowUp, Paperclip } from 'lucide-react';
+import { Send, Loader2, AlertCircle, Check, FileText, Image, X, Edit2, Plus, X as XIcon, RefreshCw, History, Mic, Sparkles, ArrowUp, Paperclip, Square } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { api } from '@/utils/api';
@@ -12,80 +12,32 @@ import { ConversationHistoryPanel } from '@/components/ui/ConversationHistoryPan
 import { useSpeechToText } from '@/hooks/useSpeechToText';
 import { Orb } from '@yogesharc/thinking-orbs';
 
-const SUGGESTION_LABELS = {
-  'Computer Science': [
-    'Explain quicksort',
-    'Stack vs queue',
-    'Big-O notation',
-    'Java garbage collection',
-    'Recurrence relation',
-  ],
-  Mathematics: [
-    'Prove √2 is irrational',
-    'Fundamental theorem',
-    'Differential equations',
-    'Calculus basics',
-    'Practice integral',
-  ],
-  Physics: [
-    'Equations of motion',
-    'Photoelectric effect',
-    'Quantum entanglement',
-    'Newton’s laws',
-    'Practice problem',
-  ],
-  Chemistry: [
-    'Balance an equation',
-    'Le Chatelier’s principle',
-    'Hybridization',
-    'Periodic trends',
-    'Practice problem',
-  ],
-  Algorithms: [
-    'Explain quicksort',
-    'Big-O notation',
-    'Graph traversal',
-    'Dynamic programming',
-    'Practice problem',
-  ],
-  default: [
-    'Explain a concept',
-    'Give an example',
-    'Key definitions',
-    'Summarize the unit',
-    'Practice problem',
-  ],
-};
+// Every conversation (including an unsaved draft) gets its own state bucket.
+// A generation writes into its own bucket, so switching chats or starting a new
+// one never leaks a response into the conversation that happens to be open.
+let draftCounter = 0;
+const createDraftKey = () => `draft-${Date.now()}-${++draftCounter}`;
 
-const EXAMPLE_PROMPTS = {
-  'Computer Science': [
-    'What is the time complexity of quicksort?',
-    'Explain the difference between stack and queue',
-    'How does garbage collection work in Java?',
-  ],
-  'Mathematics': [
-    'Prove that the square root of 2 is irrational',
-    'What is the fundamental theorem of calculus?',
-    'Solve the differential equation dy/dx = y',
-  ],
-  'Physics': [
-    'Derive the equations of motion for constant acceleration',
-    'What is the photoelectric effect?',
-    'Explain quantum entanglement',
-  ],
-  'Chemistry': [
-    'Balance the chemical equation for combustion of methane',
-    'What is Le Chatelier\'s principle?',
-    'Explain hybridization in methane',
-  ],
-  'default': [
-    'What are the key concepts in this subject?',
-    'Summarize the main topics covered this semester',
-    'Give me an example problem from this unit',
-    'How should I prepare for the exam?',
-    'Show me a worked example',
-  ],
-};
+const makeThread = (key, overrides = {}) => ({
+  key,
+  conversationId: null,
+  subject: '',
+  messages: [],
+  streaming: false,
+  currentAnswer: '',
+  citations: [],
+  status: null,
+  error: '',
+  permissionPrompt: null,
+  pendingQuery: null,
+  generatingImage: false,
+  generatedImageData: null,
+  loadingThread: false,
+  loaded: false,
+  ...overrides,
+});
+
+const EMPTY_THREAD = makeThread('empty');
 
 // Chat attachments use the same limits as the existing picker and backend route.
 const CHAT_ALLOWED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'application/pdf'];
@@ -114,25 +66,18 @@ export function AskPage() {
   const urlIsNewChat = searchParams.get('new') === 'true';
   const [subject, setSubject] = useState(() => urlSubject || '');
   const [question, setQuestion] = useState('');
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [streaming, setStreaming] = useState(false);
-  const [currentAnswer, setCurrentAnswer] = useState('');
-  const [citations, setCitations] = useState([]);
-  const [conversationId, setConversationId] = useState(null);
-  const [error, setError] = useState('');
+  const [threads, setThreads] = useState({});
+  const [activeKey, setActiveKey] = useState(() => createDraftKey());
   const [subjects, setSubjects] = useState([]);
-  const [permissionPrompt, setPermissionPrompt] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [pendingQuery, setPendingQuery] = useState(null);
+  // Suggestions come from real course materials for the selected subject.
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   // Pending file (not yet sent) - shows in chip above input
   const [pendingFile, setPendingFile] = useState(null);
   const [pendingFilePreview, setPendingFilePreview] = useState(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [ocrText, setOcrText] = useState('');
   const [showOcrPreview, setShowOcrPreview] = useState(false);
-  const [generatingImage, setGeneratingImage] = useState(false);
-  const [generatedImageData, setGeneratedImageData] = useState(null);
   const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [historyMessages, setHistoryMessages] = useState([]);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
@@ -145,14 +90,54 @@ export function AskPage() {
   // external (sidebar/drawer) change apart from a composer pick that is still
   // waiting for React Router to commit the new query string.
   const lastUrlSubjectRef = useRef(urlSubject);
-  // Track the last loaded conversation ID to prevent duplicate loads
-  const lastLoadedConvIdRef = useRef(null);
-  // Track if we're mid-stream and already have a conversationId from the backend
-  // This prevents the URL effect from clearing/loading the just-created conversation.
-  const sseConversationIdRef = useRef(null);
   // Guards the one-shot "new chat" reset so it cannot retrigger before the
   // router commits the cleaned URL (React Router 7 navigations are transitions).
   const handledNewChatRef = useRef(false);
+  // Live state mirrors used by async stream callbacks (avoids stale closures).
+  const activeKeyRef = useRef(activeKey);
+  const threadsRef = useRef(threads);
+  // One AbortController per thread, so cancelling one chat never stops another.
+  const streamsRef = useRef(new Map());
+  const loadingConvIdsRef = useRef(new Set());
+
+  useEffect(() => {
+    activeKeyRef.current = activeKey;
+  }, [activeKey]);
+
+  useEffect(() => {
+    threadsRef.current = threads;
+  }, [threads]);
+
+  const patchThread = useCallback((key, patch) => {
+    if (!key) return;
+    setThreads((prev) => {
+      const base = prev[key] || makeThread(key);
+      const value = typeof patch === 'function' ? patch(base) : patch;
+      return { ...prev, [key]: { ...base, ...value, key } };
+    });
+  }, []);
+
+  const activateThread = useCallback((key, nextSubject) => {
+    activeKeyRef.current = key;
+    setActiveKey(key);
+    if (nextSubject !== undefined) setSubject(nextSubject);
+  }, []);
+
+  const activeThread = threads[activeKey] || EMPTY_THREAD;
+  const {
+    messages,
+    streaming,
+    currentAnswer,
+    citations,
+    status,
+    error,
+    permissionPrompt,
+    pendingQuery,
+    generatingImage,
+    generatedImageData,
+    conversationId,
+  } = activeThread;
+  const loading = streaming || activeThread.loadingThread;
 
   // Cross-browser speech-to-text (MediaRecorder + backend Whisper, with Web Speech fallback)
   const {
@@ -209,61 +194,91 @@ export function AskPage() {
     setShowOcrPreview(false);
   }, [pendingFilePreview]);
 
-  // Load conversation from URL parameter
+  // Load a conversation into its own thread bucket. The response only touches
+  // that bucket, so a slow load can never overwrite a different chat that the
+  // student opened in the meantime.
   const loadConversation = useCallback(async (id) => {
     if (!id) return;
-    // Prevent duplicate loads for the same conversation
-    if (lastLoadedConvIdRef.current === id) {
+    // A live generation for this id is already the source of truth.
+    if (streamsRef.current.has(id)) {
+      const live = threadsRef.current[id];
+      activateThread(id, live?.subject);
       return;
     }
-    lastLoadedConvIdRef.current = id;
+    const existing = threadsRef.current[id];
+    if (existing?.loaded) {
+      activateThread(id, existing.subject);
+      return;
+    }
+    if (loadingConvIdsRef.current.has(id)) return;
+
+    loadingConvIdsRef.current.add(id);
+    patchThread(id, { loadingThread: true, error: '' });
+    activateThread(id, existing?.subject);
     try {
-      setLoading(true);
-      setError('');
       const res = await chatApi.getConversation(id);
       const conv = res.data.conversation;
-      if (conv) {
-        setConversationId(conv._id);
-        setSubject(conv.subject);
+      if (!conv) {
+        patchThread(id, {
+          loadingThread: false,
+          loaded: true,
+          error: 'Conversation not found',
+          messages: [],
+          conversationId: null,
+        });
+        return;
+      }
+      // Convert messages to frontend format. Attachments come straight from
+      // the persisted document, including PDFs restored after a refresh.
+      const formattedMessages = (conv.messages || []).map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        citations: msg.citations || [],
+        webSources: msg.webSources || [],
+        isWebSearch: msg.isWebSearch || false,
+        attachments: msg.attachments || [],
+        timestamp: msg.timestamp,
+      }));
+      patchThread(id, {
+        conversationId: conv._id,
+        subject: conv.subject || '',
+        messages: formattedMessages,
+        currentAnswer: '',
+        citations: [],
+        permissionPrompt: null,
+        status: null,
+        pendingQuery: null,
+        generatingImage: false,
+        generatedImageData: null,
+        streaming: false,
+        error: '',
+        loadingThread: false,
+        loaded: true,
+      });
+      if (activeKeyRef.current === id) {
+        setSubject(conv.subject || '');
+        removePendingFile();
         setSearchParams((prev) => {
           const newParams = new URLSearchParams(prev);
           newParams.set('subject', conv.subject);
           newParams.set('conversation', conv._id);
+          newParams.delete('new');
           return newParams;
         }, { replace: true });
-        // Convert messages to frontend format
-        const formattedMessages = (conv.messages || []).map(msg => ({
-          role: msg.role,
-          content: msg.content,
-          citations: msg.citations || [],
-          webSources: msg.webSources || [],
-          isWebSearch: msg.isWebSearch || false,
-          attachments: msg.attachments || [],
-          timestamp: msg.timestamp,
-        }));
-        setMessages(formattedMessages);
-        setCurrentAnswer('');
-        setCitations([]);
-        setPermissionPrompt(null);
-        setStatus(null);
-        setPendingQuery(null);
-        removePendingFile();
-      } else {
-        setError('Conversation not found');
-        setMessages([]);
-        setConversationId(null);
-        lastLoadedConvIdRef.current = null;
       }
     } catch (err) {
       console.error('Failed to load conversation:', err);
-      setError('Failed to load conversation');
-      setMessages([]);
-      setConversationId(null);
-      lastLoadedConvIdRef.current = null;
+      patchThread(id, {
+        loadingThread: false,
+        loaded: true,
+        error: 'Failed to load conversation',
+        messages: [],
+        conversationId: null,
+      });
     } finally {
-      setLoading(false);
+      loadingConvIdsRef.current.delete(id);
     }
-  }, [removePendingFile, setSearchParams]);
+  }, [activateThread, patchThread, removePendingFile, setSearchParams]);
 
   // Fetch subjects
   const fetchSubjects = useCallback(async () => {
@@ -333,73 +348,57 @@ export function AskPage() {
     fetchSubjects();
   }, [isAuthenticated, navigate, fetchSubjects]);
 
-  // Handle URL parameters (new chat, conversation ID)
+  // Start a fresh draft thread for a new chat. Any thread that is still
+  // generating keeps running in the background under its own key.
+  const startNewChat = useCallback((nextSubject) => {
+    const key = createDraftKey();
+    const threadSubject = nextSubject !== undefined ? nextSubject : (urlSubject || subject);
+    patchThread(key, { subject: threadSubject, loaded: true });
+    activateThread(key, threadSubject);
+    setQuestion('');
+    removePendingFile();
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev);
+      newParams.delete('conversation');
+      newParams.delete('new');
+      if (threadSubject) newParams.set('subject', threadSubject);
+      return newParams;
+    }, { replace: true });
+  }, [activateThread, patchThread, removePendingFile, setSearchParams, subject, urlSubject]);
+
+  // Handle the one-shot ?new=true navigation from the sidebar.
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    // Check for new chat parameter
-    if (urlIsNewChat) {
-      // React Router 7 commits navigations inside a transition, so this effect
-      // can re-run with a stale `?new=true` search before the URL updates.
-      // Without this guard the reset + navigate pair loops forever
-      // ("Maximum update depth exceeded").
-      if (handledNewChatRef.current) return;
-      handledNewChatRef.current = true;
-
-      // Clear the new parameter from URL
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('new');
-      setSearchParams(nextParams, { replace: true });
-
-      // Reset conversation state for new chat
-      setConversationId(null);
-      setMessages([]);
-      setCurrentAnswer('');
-      setCitations([]);
-      setError('');
-      setPermissionPrompt(null);
-      setStatus(null);
-      setPendingQuery(null);
-      removePendingFile();
-      sseConversationIdRef.current = null;
-      // Allow the same conversation to be opened again after starting a new chat.
-      lastLoadedConvIdRef.current = null;
+    if (!urlIsNewChat) {
+      handledNewChatRef.current = false;
       return;
     }
+    if (handledNewChatRef.current) return;
+    handledNewChatRef.current = true;
+    startNewChat(urlSubject || subject);
+  }, [isAuthenticated, urlIsNewChat, urlSubject, subject, startNewChat]);
 
-    handledNewChatRef.current = false;
+  // Open the conversation named in the URL. The loader only writes into that
+  // conversation's own bucket, so switching mid-load is safe.
+  useEffect(() => {
+    if (!isAuthenticated || urlIsNewChat || !urlConversationId) return;
+    if (urlConversationId === activeKeyRef.current) return;
+    loadConversation(urlConversationId);
+  }, [isAuthenticated, urlIsNewChat, urlConversationId, loadConversation]);
 
-    // If we just received a conversationId from SSE, don't reload it from URL.
-    // The SSE event is the authoritative source for newly created conversations.
-    if (sseConversationIdRef.current && urlConversationId === sseConversationIdRef.current) {
-      return;
-    }
-
-    // Check for conversation ID in URL
-    if (urlConversationId) {
-      loadConversation(urlConversationId);
-    } else if (!urlConversationId && conversationId) {
-      // URL no longer has conversation param but we have one in state - clear it
-      setConversationId(null);
-      setMessages([]);
-      setCurrentAnswer('');
-      setCitations([]);
-      setPermissionPrompt(null);
-      setStatus(null);
-      setPendingQuery(null);
-      removePendingFile();
-      lastLoadedConvIdRef.current = null;
-    }
-  }, [
-    isAuthenticated,
-    urlConversationId,
-    urlIsNewChat,
-    searchParams,
-    setSearchParams,
-    loadConversation,
-    conversationId,
-    removePendingFile,
-  ]);
+  // Navigating to /ask without a conversation should show a fresh draft, not
+  // silently keep the previous chat on screen.
+  useEffect(() => {
+    if (!isAuthenticated || urlIsNewChat || urlConversationId) return;
+    const current = threadsRef.current[activeKeyRef.current];
+    if (!current?.conversationId) return;
+    const key = createDraftKey();
+    const nextSubject = urlSubject || current.subject || subject;
+    patchThread(key, { subject: nextSubject, loaded: true });
+    activateThread(key, nextSubject);
+    setQuestion('');
+    removePendingFile();
+  }, [isAuthenticated, urlConversationId, urlIsNewChat, urlSubject, patchThread, activateThread, removePendingFile, subject]);
 
   // Keep the subject in sync when it is changed from the sidebar / drawer.
   // Never do this while an existing conversation is open: the conversation's
@@ -407,7 +406,7 @@ export function AskPage() {
   useEffect(() => {
     const urlSubjectChanged = lastUrlSubjectRef.current !== urlSubject;
     lastUrlSubjectRef.current = urlSubject;
-    if (!isAuthenticated || urlConversationId || !urlSubject) return;
+    if (!isAuthenticated || urlConversationId || urlIsNewChat || !urlSubject) return;
     // Only react to genuine URL changes. A subject picked in the composer also
     // writes the URL, but React Router 7 commits that navigation after the
     // state update; without this guard the stale URL value would revert the
@@ -415,15 +414,10 @@ export function AskPage() {
     if (!urlSubjectChanged) return;
     if (urlSubject === subject) return;
 
-    setSubject(urlSubject);
-    setMessages([]);
-    setConversationId(null);
-    setCurrentAnswer('');
-    setCitations([]);
-    setPermissionPrompt(null);
-    setStatus(null);
-    setPendingQuery(null);
-    setError('');
+    const key = createDraftKey();
+    patchThread(key, { subject: urlSubject, loaded: true });
+    activateThread(key, urlSubject);
+    setQuestion('');
     removePendingFile();
     setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev);
@@ -434,11 +428,38 @@ export function AskPage() {
   }, [
     isAuthenticated,
     urlConversationId,
+    urlIsNewChat,
     urlSubject,
     subject,
     setSearchParams,
     removePendingFile,
+    patchThread,
+    activateThread,
   ]);
+
+  // Load suggestions from the course materials that exist for this subject.
+  // No hardcoded or random prompts: an empty response renders an empty state.
+  useEffect(() => {
+    if (!isAuthenticated || !subject) {
+      setSuggestions([]);
+      setSuggestionsLoading(false);
+      return undefined;
+    }
+    let active = true;
+    setSuggestionsLoading(true);
+    chatApi.suggestions({ subject })
+      .then((res) => {
+        if (active) setSuggestions(res.data?.suggestions || []);
+      })
+      .catch((err) => {
+        console.error('Failed to load suggestions:', err);
+        if (active) setSuggestions([]);
+      })
+      .finally(() => {
+        if (active) setSuggestionsLoading(false);
+      });
+    return () => { active = false; };
+  }, [isAuthenticated, subject]);
 
   // Scroll to the latest message
   useEffect(() => {
@@ -463,19 +484,13 @@ export function AskPage() {
     };
   }, [messages]);
 
-
   const handleSubjectChange = (newSubject) => {
-    setSubject(newSubject);
-    setMessages([]);
-    setConversationId(null);
-    setCurrentAnswer('');
-    setCitations([]);
-    setPermissionPrompt(null);
-    setStatus(null);
-    setPendingQuery(null);
     setPlusMenuOpen(false);
-    // Keep the selected subject in the URL so the sidebar stays in sync.
-    setSearchParams(prev => {
+    const key = createDraftKey();
+    patchThread(key, { subject: newSubject, loaded: true });
+    activateThread(key, newSubject);
+    setQuestion('');
+    setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev);
       newParams.delete('conversation');
       newParams.delete('new');
@@ -486,19 +501,36 @@ export function AskPage() {
     removePendingFile();
   };
 
-  const getExamplePrompts = () => {
-    return EXAMPLE_PROMPTS[subject] || EXAMPLE_PROMPTS.default;
-  };
+  // Stop only the generation that belongs to this thread. Other chats that are
+  // generating in the background keep their own controllers untouched.
+  const cancelGeneration = useCallback((key = activeKeyRef.current) => {
+    const record = streamsRef.current.get(key);
+    if (!record) return;
+    record.cancelled = true;
+    streamsRef.current.delete(key);
+    try {
+      record.controller.abort();
+    } catch {
+      // The request may already be finished; nothing to abort.
+    }
+    patchThread(key, {
+      streaming: false,
+      currentAnswer: '',
+      status: null,
+      generatingImage: false,
+      error: '',
+    });
+  }, [patchThread]);
 
   const applyFileAttachment = (file) => {
     // Validate against the same types and size the existing picker/backend use.
     if (!CHAT_ALLOWED_FILE_TYPES.includes(file.type)) {
-      setError(CHAT_FILE_TYPE_ERROR);
+      patchThread(activeKey, { error: CHAT_FILE_TYPE_ERROR });
       return false;
     }
 
     if (file.size > CHAT_MAX_FILE_SIZE) {
-      setError(CHAT_FILE_SIZE_ERROR);
+      patchThread(activeKey, { error: CHAT_FILE_SIZE_ERROR });
       return false;
     }
 
@@ -509,12 +541,12 @@ export function AskPage() {
       pendingFile.type === file.type &&
       pendingFile.size === file.size
     ) {
-      setError('');
+      patchThread(activeKey, { error: '' });
       return true;
     }
 
     setPendingFile(file);
-    setError('');
+    patchThread(activeKey, { error: '' });
 
     // Create preview for images
     if (file.type.startsWith('image/')) {
@@ -583,7 +615,7 @@ export function AskPage() {
 
     // The existing chat upload accepts one file per message.
     if (files.length > 1) {
-      setError('Please attach one file per message.');
+      patchThread(activeKey, { error: 'Please attach one file per message.' });
       return;
     }
 
@@ -624,27 +656,278 @@ export function AskPage() {
     setOcrText('');
   };
 
-  const handleAsk = async (e) => {
-    e.preventDefault();
-    const rawQuestion = question.trim();
+  // Consume an SSE response for one thread. Every write is addressed to that
+  // thread's key, so a background answer can finish while another chat is open
+  // without leaking into it.
+  const processSseStream = useCallback(async (res, initialKey, record, { rawQuestion = '', isWebSearch = false } = {}) => {
+    let streamKey = initialKey;
+    let fullAnswer = '';
+    let finalCitations = [];
+    let finalImage = null;
+    let sawPermission = false;
+    let sawError = false;
+    let buffer = '';
+    let eventCount = 0;
+
+    const adoptConversationId = (id) => {
+      if (!id || record.cancelled) return;
+      if (id === streamKey) {
+        patchThread(id, { conversationId: id });
+        return;
+      }
+      const previousKey = streamKey;
+      setThreads((prev) => {
+        const source = prev[previousKey] || makeThread(previousKey);
+        const target = prev[id];
+        const next = { ...prev };
+        delete next[previousKey];
+        next[id] = target
+          ? { ...target, ...source, key: id, conversationId: id, subject: source.subject || target.subject }
+          : { ...source, key: id, conversationId: id };
+        return next;
+      });
+      const live = streamsRef.current.get(previousKey);
+      if (live) {
+        streamsRef.current.delete(previousKey);
+        streamsRef.current.set(id, live);
+      }
+      streamKey = id;
+      if (activeKeyRef.current === previousKey) {
+        activeKeyRef.current = id;
+        setActiveKey(id);
+        setSearchParams((prev) => {
+          const params = new URLSearchParams(prev);
+          params.set('conversation', id);
+          params.delete('new');
+          return params;
+        }, { replace: true });
+      }
+      // The conversation now exists in the database (with the user's first
+      // message), so the sidebar can refresh immediately.
+      window.dispatchEvent(new Event('pu:history-updated'));
+    };
+
+    const handleEvent = (parsed) => {
+      if (record.cancelled) return;
+      switch (parsed.type) {
+        case 'content':
+          if (parsed.content) {
+            patchThread(streamKey, (thread) => ({
+              ...thread,
+              currentAnswer: thread.currentAnswer + parsed.content,
+            }));
+          }
+          break;
+        case 'status':
+          patchThread(streamKey, { status: { status: parsed.status, stage: parsed.stage } });
+          break;
+        case 'citations':
+          finalCitations = parsed.citations || [];
+          patchThread(streamKey, { citations: finalCitations });
+          break;
+        case 'conversationId':
+          adoptConversationId(parsed.id);
+          break;
+        case 'ocr_text':
+          if (parsed.text) {
+            setOcrText(parsed.text);
+            setShowOcrPreview(true);
+          }
+          break;
+        case 'image_pending':
+          patchThread(streamKey, { generatingImage: true });
+          break;
+        case 'image_ready':
+          if (parsed.image) {
+            finalImage = parsed.image;
+            patchThread(streamKey, { generatedImageData: parsed.image, generatingImage: false });
+          }
+          break;
+        case 'error':
+          sawError = true;
+          console.error('[Chat] SSE error event:', parsed);
+          patchThread(streamKey, { error: parsed.message || parsed.error || 'An error occurred' });
+          break;
+        case 'permission':
+          sawPermission = true;
+          if (parsed.permissionPrompt) {
+            patchThread(streamKey, {
+              permissionPrompt: parsed.permissionPrompt,
+              streaming: false,
+              status: null,
+            });
+          }
+          break;
+        default:
+          // Handle legacy events (status/content without an explicit type).
+          if (parsed.status) {
+            patchThread(streamKey, { status: { status: parsed.status, stage: parsed.stage } });
+          } else if (parsed.content) {
+            patchThread(streamKey, (thread) => ({
+              ...thread,
+              currentAnswer: thread.currentAnswer + parsed.content,
+            }));
+          } else if (parsed.needsPermission && parsed.permissionPrompt) {
+            sawPermission = true;
+            patchThread(streamKey, { permissionPrompt: parsed.permissionPrompt, streaming: false });
+          }
+      }
+    };
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        if (record.cancelled) break;
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue;
+          const data = trimmedLine.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            eventCount += 1;
+            handleEvent(parsed);
+            if (parsed.type === 'content' && parsed.content) {
+              fullAnswer += parsed.content;
+            }
+          } catch (parseErr) {
+            console.warn('[Chat] Failed to parse SSE data:', data, parseErr);
+            fullAnswer += data;
+            if (!record.cancelled) {
+              patchThread(streamKey, { currentAnswer: fullAnswer });
+            }
+          }
+        }
+      }
+
+      if (buffer && !record.cancelled) {
+        const trimmedBuffer = buffer.trim();
+        if (trimmedBuffer.startsWith('data: ')) {
+          const data = trimmedBuffer.slice(6).trim();
+          if (data !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(data);
+              handleEvent(parsed);
+              if (parsed.type === 'content' && parsed.content) {
+                fullAnswer += parsed.content;
+              }
+            } catch {
+              fullAnswer += buffer;
+              patchThread(streamKey, { currentAnswer: fullAnswer });
+            }
+          }
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Reader already released.
+      }
+    }
+
+    if (record.cancelled) return;
+
+    if (fullAnswer.trim() || finalImage) {
+      const assistantMessage = {
+        role: 'assistant',
+        content: fullAnswer || '[Generated Image]',
+        citations: finalCitations,
+        webSources: [],
+        isWebSearch: Boolean(isWebSearch || rawQuestion.startsWith('\\') || rawQuestion.startsWith('＼')),
+        attachments: finalImage
+          ? [{
+            type: 'generated_image',
+            url: finalImage.dataUrl,
+            mimeType: finalImage.mimeType,
+            width: finalImage.width,
+            height: finalImage.height,
+            prompt: finalImage.prompt,
+          }]
+          : [],
+        timestamp: new Date().toISOString(),
+      };
+      patchThread(streamKey, (thread) => ({
+        ...thread,
+        messages: [...thread.messages, assistantMessage],
+        streaming: false,
+        currentAnswer: '',
+        status: null,
+        citations: finalCitations,
+        generatingImage: false,
+        generatedImageData: null,
+        pendingQuery: null,
+      }));
+      window.dispatchEvent(new Event('pu:history-updated'));
+    } else if (sawPermission) {
+      patchThread(streamKey, {
+        streaming: false,
+        currentAnswer: '',
+        status: null,
+        generatingImage: false,
+      });
+    } else if (!sawError) {
+      patchThread(streamKey, (thread) => ({
+        ...thread,
+        streaming: false,
+        currentAnswer: '',
+        status: null,
+        generatingImage: false,
+        pendingQuery: null,
+        error: thread.error || 'No answer received, please try again.',
+      }));
+    } else {
+      patchThread(streamKey, {
+        streaming: false,
+        currentAnswer: '',
+        status: null,
+        generatingImage: false,
+        pendingQuery: null,
+      });
+    }
+
+    console.log('[Chat] SSE stream finished, events:', eventCount, 'answer length:', fullAnswer.length);
+  }, [patchThread, setSearchParams]);
+
+  const handleAsk = async (e, overrideQuestion) => {
+    if (e?.preventDefault) e.preventDefault();
+    const rawQuestion = (overrideQuestion ?? question).trim();
     // Allow sending with just a file (no question text)
     if (!rawQuestion && !pendingFile) return;
     if (!subject) return;
 
-    // Backend will detect web search trigger and sanitize
-    // Frontend sends raw question as-is
-    console.log('[Chat] Raw question:', rawQuestion, 'hasFile:', !!pendingFile);
+    // One generation per thread at a time.
+    const threadKey = activeKeyRef.current;
+    if (streamsRef.current.has(threadKey)) return;
 
-    // Keep original query for potential web search retry
-    setPendingQuery(rawQuestion);
+    const controller = new AbortController();
+    const record = { controller, cancelled: false, timedOut: false };
+    streamsRef.current.set(threadKey, record);
 
-    setLoading(true);
-    setError('');
-    setStreaming(true);
-    setCurrentAnswer('');
-    setPermissionPrompt(null);
-    setGeneratingImage(false);
-    setGeneratedImageData(null);
+    const conversationForSend = conversationId;
+
+    patchThread(threadKey, {
+      subject,
+      streaming: true,
+      currentAnswer: '',
+      citations: [],
+      status: null,
+      error: '',
+      permissionPrompt: null,
+      pendingQuery: rawQuestion,
+      generatingImage: false,
+      generatedImageData: null,
+      loaded: true,
+    });
 
     // Build attachment object for the user message (includes previewUrl for rendering)
     const attachment = pendingFile ? {
@@ -660,211 +943,91 @@ export function AskPage() {
       content: userMessageContent,
       citations: [],
       attachments: attachment ? [attachment] : [],
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    setMessages(prev => [...prev, userMessage]);
+    // The question appears immediately, before the answer, and is never
+    // appended again when the response arrives. If the last turn is the same
+    // unanswered question (retry after cancel/error), reuse it instead of
+    // showing a duplicate.
+    patchThread(threadKey, (thread) => {
+      const last = thread.messages[thread.messages.length - 1];
+      const isRetryOfLastUserTurn = !pendingFile
+        && last?.role === 'user'
+        && last.content === userMessageContent;
+      return {
+        ...thread,
+        messages: isRetryOfLastUserTurn ? thread.messages : [...thread.messages, userMessage],
+      };
+    });
 
     // Clear pending file (moves it into the message above)
     const fileToSend = pendingFile;
     setPendingFile(null);
     setPendingFilePreview(null);
     setQuestion('');
+    setOcrText('');
+    setShowOcrPreview(false);
 
-    // AbortController for timeout and cleanup - 240s for slow vision responses
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 240000); // 240s timeout
+    const timeoutId = setTimeout(() => {
+      record.timedOut = true;
+      controller.abort();
+    }, 240000); // 240s for slow vision responses
 
     try {
       const token = localStorage.getItem('token');
-
       if (!token) {
-        setError('Please log in to ask questions');
-        setStreaming(false);
-        setLoading(false);
+        patchThread(threadKey, {
+          streaming: false,
+          error: 'Please log in to ask questions',
+        });
         return;
       }
 
-      // Use the new chatApi.ask with FormData - NO isWebSearch flag, backend detects it
       const res = await chatApi.ask({
         question: rawQuestion,
         subject,
-        conversationId,
+        conversationId: conversationForSend,
         file: fileToSend,
       }, controller.signal);
 
       if (!res.ok) {
         const errorText = await res.text();
         console.error('[Chat] Server error:', res.status, errorText);
-        setError(`Server error: ${res.status} - ${errorText}`);
-        setStreaming(false);
-        setLoading(false);
+        if (!record.cancelled) {
+          patchThread(threadKey, {
+            streaming: false,
+            error: `Server error: ${res.status} - ${errorText}`,
+          });
+        }
         return;
       }
 
-      console.log('[Chat] SSE stream started, content-type:', res.headers.get('content-type'));
-
-      // Process SSE stream
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let fullAnswer = '';
-      let buffer = '';
-      let eventCount = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue; // ignore empty lines
-          
-          if (trimmedLine.startsWith('data: ')) {
-            const data = trimmedLine.slice(6).trim();
-            if (data === '[DONE]') {
-              console.log('[Chat] Received [DONE] event');
-              continue;
-            }
-            try {
-              const parsed = JSON.parse(data);
-              eventCount++;
-              console.log(`[Chat] SSE event #${eventCount}:`, parsed.type, parsed.status || parsed.content ? 'content' : '');
-              handleStreamEvent(parsed);
-              // Accumulate content for final message
-              if (parsed.type === 'content' && parsed.content) {
-                fullAnswer += parsed.content;
-              }
-            } catch (parseErr) {
-              console.warn('[Chat] Failed to parse SSE data:', data, parseErr);
-              // Handle plain text chunks (fallback)
-              fullAnswer += data;
-              setCurrentAnswer(fullAnswer);
-            }
-          }
-        }
-      }
-
-      if (buffer) {
-        try {
-          const trimmedBuffer = buffer.trim();
-          if (trimmedBuffer.startsWith('data: ')) {
-            const data = trimmedBuffer.slice(6).trim();
-            if (data !== '[DONE]') {
-              const parsed = JSON.parse(data);
-              handleStreamEvent(parsed);
-              if (parsed.type === 'content' && parsed.content) {
-                fullAnswer += parsed.content;
-              }
-            }
-          }
-        } catch {
-          fullAnswer += buffer;
-          setCurrentAnswer(fullAnswer);
-        }
-      }
-
-      // Only add assistant message for streaming responses with actual content
-      if (fullAnswer.trim() || generatedImageData) {
-        const assistantMessage = {
-          role: 'assistant',
-          content: fullAnswer || (generatedImageData ? '[Generated Image]' : ''),
-          citations,
-          webSources: [],
-         isWebSearch: rawQuestion.startsWith('\\'),  // Set based on whether it was a web search
-          timestamp: new Date().toISOString()
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-      } else if (!permissionPrompt && !error) {
-        // Stream finished but no answer received
-        setError('No answer received, please try again.');
-      }
-      setStreaming(false);
-
+      await processSseStream(res, threadKey, record, { rawQuestion });
     } catch (err) {
+      if (record.cancelled) return;
       if (err.name === 'AbortError') {
-        setError('Request timed out. Please try again.');
+        patchThread(threadKey, {
+          streaming: false,
+          currentAnswer: '',
+          status: null,
+          generatingImage: false,
+          error: record.timedOut ? 'Request timed out. Please try again.' : '',
+        });
       } else {
         console.error('Chat error:', err);
-        setError('Failed to get answer. Please try again.');
+        patchThread(threadKey, {
+          streaming: false,
+          currentAnswer: '',
+          status: null,
+          generatingImage: false,
+          error: 'Failed to get answer. Please try again.',
+        });
       }
-      setStreaming(false);
     } finally {
       clearTimeout(timeoutId);
-      setLoading(false);
+      streamsRef.current.delete(threadKey);
     }
   };
-
-  const handleStreamEvent = (parsed) => {
-    console.log('[Chat] handleStreamEvent:', parsed.type, parsed.status || parsed.content ? 'has content' : '');
-    switch (parsed.type) {
-      case 'content':
-        if (parsed.content) {
-          setCurrentAnswer(prev => prev + parsed.content);
-        }
-        break;
-      case 'status':
-        setStatus({ status: parsed.status, stage: parsed.stage });
-        break;
-      case 'citations':
-        if (parsed.citations) {
-          setCitations(parsed.citations);
-        }
-        break;
-      case 'conversationId':
-        if (parsed.id) {
-          setConversationId(parsed.id);
-          sseConversationIdRef.current = parsed.id;
-          // Update URL with conversation ID
-          setSearchParams(prev => {
-            const newParams = new URLSearchParams(prev);
-            newParams.set('conversation', parsed.id);
-            return newParams;
-          });
-        }
-        break;
-      case 'ocr_text':
-        if (parsed.text) {
-          setOcrText(parsed.text);
-          setShowOcrPreview(true);
-        }
-        break;
-      case 'image_pending':
-        setGeneratingImage(true);
-        break;
-      case 'image_ready':
-        if (parsed.image) {
-          setGeneratedImageData(parsed.image);
-          setGeneratingImage(false);
-        }
-        break;
-      case 'error':
-        console.error('[Chat] SSE error event:', parsed);
-        setError(parsed.message || parsed.error || 'An error occurred');
-        break;
-      case 'permission':
-        // Handle permission prompt from backend
-        if (parsed.permissionPrompt) {
-          setPermissionPrompt(parsed.permissionPrompt);
-          setStreaming(false);
-        }
-        break;
-      default:
-        // Handle legacy events (status without type)
-        if (parsed.status) {
-          setStatus({ status: parsed.status, stage: parsed.stage });
-        } else if (parsed.content) {
-          setCurrentAnswer(prev => prev + parsed.content);
-        } else if (parsed.needsPermission && parsed.permissionPrompt) {
-          // Legacy format support
-          setPermissionPrompt(parsed.permissionPrompt);
-          setStreaming(false);
-        }
-    }
-  };
-
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -879,32 +1042,48 @@ export function AskPage() {
   const handlePermissionResponse = async (confirmed) => {
     if (!permissionPrompt) return;
 
+    const threadKey = activeKeyRef.current;
     const userMessage = {
       role: 'user',
-      content: confirmed ? 'Yes, search the web' : 'No, I\'ll rephrase my question',
+      content: confirmed ? 'Yes, search the web' : "No, I'll rephrase my question",
       citations: [],
       attachments: [],
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     };
-    setMessages(prev => [...prev, userMessage]);
+    patchThread(threadKey, (thread) => ({
+      ...thread,
+      messages: [...thread.messages, userMessage],
+    }));
 
     if (!confirmed) {
-      setPermissionPrompt(null);
-      setPendingQuery(null);
+      patchThread(threadKey, { permissionPrompt: null, pendingQuery: null });
       // Focus input for rephrasing
       textareaRef.current?.focus();
       return;
     }
 
-    // User confirmed - call confirm-web-search
-    setLoading(true);
-    setStreaming(true);
-    setCurrentAnswer('');
-    setPermissionPrompt(null);
-    setStatus({ status: 'Searching the web...', stage: 'webSearch' });
+    if (streamsRef.current.has(threadKey)) return;
+
+    const thread = threadsRef.current[threadKey];
+    const conversationForSend = thread?.conversationId || conversationId;
+    const questionForSearch = thread?.pendingQuery || pendingQuery;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 240000); // 240s timeout
+    const record = { controller, cancelled: false, timedOut: false };
+    streamsRef.current.set(threadKey, record);
+
+    patchThread(threadKey, {
+      streaming: true,
+      currentAnswer: '',
+      permissionPrompt: null,
+      error: '',
+      status: { status: 'Searching the web...', stage: 'webSearch' },
+    });
+
+    const timeoutId = setTimeout(() => {
+      record.timedOut = true;
+      controller.abort();
+    }, 240000); // 240s timeout
 
     try {
       const token = localStorage.getItem('token');
@@ -914,108 +1093,48 @@ export function AskPage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ question: pendingQuery, subject, conversationId }),
+        body: JSON.stringify({ question: questionForSearch, subject, conversationId: conversationForSend }),
         signal: controller.signal,
       });
 
       if (!res.ok) {
         const errorText = await res.text();
         console.error('[Chat] Web search server error:', res.status, errorText);
-        setError(`Server error: ${res.status} - ${errorText}`);
-        setStreaming(false);
-        setLoading(false);
+        if (!record.cancelled) {
+          patchThread(threadKey, {
+            streaming: false,
+            error: `Server error: ${res.status} - ${errorText}`,
+          });
+        }
         return;
       }
 
-      console.log('[Chat] Confirm-web-search SSE stream started, content-type:', res.headers.get('content-type'));
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let fullAnswer = '';
-      let buffer = '';
-      let eventCount = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue;
-          
-          if (trimmedLine.startsWith('data: ')) {
-            const data = trimmedLine.slice(6).trim();
-            if (data === '[DONE]') {
-              console.log('[Chat] Confirm-web-search received [DONE] event');
-              continue;
-            }
-            try {
-              const parsed = JSON.parse(data);
-              eventCount++;
-              console.log(`[Chat] Confirm-web-search SSE event #${eventCount}:`, parsed.type, parsed.status || parsed.content ? 'content' : '');
-              handleStreamEvent(parsed);
-              if (parsed.type === 'content' && parsed.content) {
-                fullAnswer += parsed.content;
-              }
-            } catch (parseErr) {
-              console.warn('[Chat] Failed to parse SSE data:', data, parseErr);
-              fullAnswer += data;
-              setCurrentAnswer(fullAnswer);
-            }
-          }
-        }
-      }
-
-      if (buffer) {
-        try {
-          const trimmedBuffer = buffer.trim();
-          if (trimmedBuffer.startsWith('data: ')) {
-            const data = trimmedBuffer.slice(6).trim();
-            if (data !== '[DONE]') {
-              const parsed = JSON.parse(data);
-              handleStreamEvent(parsed);
-              if (parsed.type === 'content' && parsed.content) {
-                fullAnswer += parsed.content;
-              }
-            }
-          }
-        } catch {
-          fullAnswer += buffer;
-          setCurrentAnswer(fullAnswer);
-        }
-      }
-
-      if (fullAnswer.trim()) {
-        const assistantMessage = {
-          role: 'assistant',
-          content: fullAnswer,
-          citations,
-          webSources: [],
-          isWebSearch: true,
-          timestamp: new Date().toISOString()
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        setError('No answer received from web search, please try again.');
-      }
-      setStreaming(false);
-
+      await processSseStream(res, threadKey, record, {
+        rawQuestion: questionForSearch,
+        isWebSearch: true,
+      });
     } catch (err) {
+      if (record.cancelled) return;
       if (err.name === 'AbortError') {
-        setError('Web search timed out. Please try again.');
+        patchThread(threadKey, {
+          streaming: false,
+          currentAnswer: '',
+          status: null,
+          error: record.timedOut ? 'Web search timed out. Please try again.' : '',
+        });
       } else {
         console.error('Web search confirmation error:', err);
-        setError('Failed to search the web. Please try again.');
+        patchThread(threadKey, {
+          streaming: false,
+          currentAnswer: '',
+          status: null,
+          error: 'Failed to search the web. Please try again.',
+        });
       }
-      setStreaming(false);
     } finally {
       clearTimeout(timeoutId);
-      setLoading(false);
-      setPendingQuery(null);
+      streamsRef.current.delete(threadKey);
+      patchThread(threadKey, { pendingQuery: null });
     }
   };
 
@@ -1041,14 +1160,7 @@ export function AskPage() {
     showOcrPreview;
   const emptyState = !hasThread;
 
-  const suggestionPrompts = [...getExamplePrompts(), ...EXAMPLE_PROMPTS.default]
-    .filter((prompt, index, all) => all.indexOf(prompt) === index)
-    .slice(0, 5);
-  const suggestionLabels = SUGGESTION_LABELS[subject] || SUGGESTION_LABELS.default;
-
-  const surpriseMe = () => {
-    const pool = [...getExamplePrompts(), ...EXAMPLE_PROMPTS.default];
-    const prompt = pool[Math.floor(Math.random() * pool.length)];
+  const applySuggestion = (prompt) => {
     setQuestion(prompt);
     textareaRef.current?.focus();
   };
@@ -1227,8 +1339,11 @@ export function AskPage() {
                 type="button"
                 className="pu-btn-secondary"
                 onClick={() => {
-                  setError('');
-                  handleAsk(new Event('submit', { cancelable: true }));
+                  const lastUser = [...messages].reverse().find((msg) => msg.role === 'user');
+                  patchThread(activeKey, { error: '' });
+                  if (lastUser) {
+                    handleAsk(new Event('submit', { cancelable: true }), lastUser.content);
+                  }
                 }}
               >
                 <RefreshCw className="mr-1 h-3.5 w-3.5" />
@@ -1313,7 +1428,6 @@ export function AskPage() {
                 <button
                   type="button"
                   onClick={() => setPlusMenuOpen((value) => !value)}
-                  disabled={loading || streaming || generatingImage}
                   className="pu-plus-btn"
                   aria-label="Add attachment or change subject"
                   aria-expanded={plusMenuOpen}
@@ -1367,7 +1481,17 @@ export function AskPage() {
                 />
               </div>
 
-              {question.trim() || pendingFile ? (
+              {streaming ? (
+                <button
+                  type="button"
+                  className="pu-mic-btn"
+                  onClick={() => cancelGeneration(activeKey)}
+                  aria-label="Stop generating"
+                  title="Stop generating"
+                >
+                  <Square />
+                </button>
+              ) : question.trim() || pendingFile ? (
                 <button
                   type="submit"
                   className="pu-mic-btn"
@@ -1375,12 +1499,11 @@ export function AskPage() {
                     (!question.trim() && !pendingFile) ||
                     !subject ||
                     loading ||
-                    streaming ||
                     generatingImage
                   }
                   aria-label="Send message"
                 >
-                  {loading || streaming || generatingImage ? (
+                  {generatingImage ? (
                     <Loader2 className="animate-spin" />
                   ) : (
                     <ArrowUp />
@@ -1421,41 +1544,30 @@ export function AskPage() {
 
             {emptyState && (
               <div className="pu-suggestions">
-                <div className="pu-sugg-row pu-sugg-row-1">
-                  {suggestionPrompts.slice(0, 3).map((prompt, index) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      className="pu-sugg"
-                      title={prompt}
-                      onClick={() => {
-                        setQuestion(prompt);
-                        textareaRef.current?.focus();
-                      }}
-                    >
-                      {suggestionLabels[index]}
-                    </button>
-                  ))}
-                </div>
-                <div className="pu-sugg-row pu-sugg-row-2">
-                  {suggestionPrompts.slice(3, 5).map((prompt, index) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      className="pu-sugg"
-                      title={prompt}
-                      onClick={() => {
-                        setQuestion(prompt);
-                        textareaRef.current?.focus();
-                      }}
-                    >
-                      {suggestionLabels[index + 3]}
-                    </button>
-                  ))}
-                  <button type="button" className="pu-sugg-big" onClick={surpriseMe}>
-                    Surprise me
-                  </button>
-                </div>
+                {suggestionsLoading ? (
+                  <div className="pu-sugg-loading">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading suggestions…
+                  </div>
+                ) : suggestions.length > 0 ? (
+                  <div className="pu-sugg-row pu-sugg-row-1">
+                    {suggestions.slice(0, 4).map((suggestion) => (
+                      <button
+                        key={suggestion.prompt}
+                        type="button"
+                        className="pu-sugg"
+                        title={suggestion.prompt}
+                        onClick={() => applySuggestion(suggestion.prompt)}
+                      >
+                        {suggestion.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="pu-sugg-empty">
+                    No suggested questions for this subject yet.
+                  </p>
+                )}
               </div>
             )}
           </form>

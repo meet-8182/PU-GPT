@@ -63,12 +63,28 @@ export function HistoryPage() {
     fetchSubjects();
   }, [isAuthenticated, navigate, fetchConversations, fetchSubjects]);
 
+  // Stay in sync when a conversation is deleted from the sidebar or created
+  // in another tab/route.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const handleHistoryUpdated = () => fetchConversations();
+    window.addEventListener('pu:history-updated', handleHistoryUpdated);
+    return () => window.removeEventListener('pu:history-updated', handleHistoryUpdated);
+  }, [isAuthenticated, fetchConversations]);
+
   const handleDelete = async (id) => {
     if (!confirm('Delete this conversation?')) return;
     setDeletingId(id);
+    const previous = conversations;
+    // Remove immediately so the row disappears without waiting for the API.
+    setConversations((items) => items.filter((item) => item.id !== id));
     try {
       await chatApi.deleteConversation(id);
-      fetchConversations();
+      window.dispatchEvent(new Event('pu:history-updated'));
+    } catch (err) {
+      console.error('Failed to delete conversation:', err);
+      setConversations(previous);
+      setError('Failed to delete conversation');
     } finally {
       setDeletingId(null);
     }

@@ -105,8 +105,13 @@ async function ollamaChatWithTimeout(params, timeoutMs) {
  * @param {number} timeoutMs - Timeout in milliseconds
  * @returns {AsyncGenerator} - Stream of chat responses
  */
-async function* ollamaChatStreamWithTimeout(params, timeoutMs) {
+async function* ollamaChatStreamWithTimeout(params, timeoutMs, externalSignal = null) {
   const controller = new AbortController();
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort();
+    else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+  }
   const timeoutId = setTimeout(() => {
     console.log(`[Ollama] Stream timeout after ${timeoutMs}ms, aborting...`);
     controller.abort();
@@ -125,6 +130,11 @@ async function* ollamaChatStreamWithTimeout(params, timeoutMs) {
     let firstTokenTime = null;
     
     for await (const chunk of stream) {
+      if (externalSignal?.aborted) {
+        const abortError = new Error('Generation cancelled');
+        abortError.name = 'AbortError';
+        throw abortError;
+      }
       if (!firstTokenTime) {
         firstTokenTime = Date.now();
         console.log(`[Ollama] First token received in ${firstTokenTime - startTime}ms`);
@@ -135,6 +145,11 @@ async function* ollamaChatStreamWithTimeout(params, timeoutMs) {
     
     console.log(`[Ollama] Stream completed in ${Date.now() - startTime}ms, chunks: ${chunkCount}`);
   } catch (error) {
+    if (externalSignal?.aborted) {
+      const abortError = new Error('Generation cancelled');
+      abortError.name = 'AbortError';
+      throw abortError;
+    }
     if (error.name === 'AbortError' || error.message?.includes('abort')) {
       throw new Error(`Ollama stream timed out after ${timeoutMs}ms`);
     }
@@ -142,6 +157,7 @@ async function* ollamaChatStreamWithTimeout(params, timeoutMs) {
     throw error;
   } finally {
     clearTimeout(timeoutId);
+    if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
   }
 }
 
@@ -1033,7 +1049,7 @@ export async function webSearch(query, studentProfile) {
   }
 }
 
-export async function callWebSearchLLM(question, searchResults, studentProfile) {
+export async function callWebSearchLLM(question, searchResults, studentProfile, signal = null) {
   const { college, program, field, fieldCategory, subject, semester } = studentProfile;
 
   // Format search results for LLM context
@@ -1082,7 +1098,7 @@ ${question}`;
       keep_alive: -1,
     },
     stream: true,
-  }, WEB_SEARCH_TIMEOUT_MS);
+  }, WEB_SEARCH_TIMEOUT_MS, signal);
 
   console.log('[WebSearchLLM] Ollama stream response created, waiting for first chunk...');
   return stream;
@@ -1090,7 +1106,7 @@ ${question}`;
 
 async function callLLM(question, context, studentProfile, conversation = null, memories = [], options = {}) {
   const { college, program, field, fieldCategory, subject, semester } = studentProfile;
-  const { analysis = null, topicSparse = false } = options;
+  const { analysis = null, topicSparse = false, signal = null } = options;
 
   // Build retrieved docs string
   const retrievedDocs = context.map((c, i) => {
@@ -1185,7 +1201,7 @@ async function callLLM(question, context, studentProfile, conversation = null, m
       keep_alive: -1,
     },
     stream: true,
-  }, CHAT_TIMEOUT_MS);
+  }, CHAT_TIMEOUT_MS, signal);
 
   console.log('[Chat] Ollama stream response created, waiting for first chunk...');
   return stream;
@@ -1268,7 +1284,7 @@ function getPreviousAnswer(conversation) {
  * @param {Object} params - { studentId, question, subject, conversationId, fileBuffer, fileMimeType, isWebSearchTrigger }
  * @returns {Object} - { stream: AsyncGenerator, needsPermission?, escalated?, webSearch?, fileData? }
  */
-export async function processChatQuestion(studentId, question, subject, conversationId = null, fileBuffer = null, fileMimeType = null, isWebSearchTrigger = false, conversationOverride = null) {
+export async function processChatQuestion(studentId, question, subject, conversationId = null, fileBuffer = null, fileMimeType = null, isWebSearchTrigger = false, conversationOverride = null, signal = null) {
   const student = await User.findById(studentId).lean();
   const studentProfile = {
     college: student?.college || 'Parul University',
@@ -1482,12 +1498,14 @@ export async function processChatQuestion(studentId, question, subject, conversa
       throw new Error(`Unsupported file type: ${fileMimeType}. Allowed: PNG, JPEG, WebP, PDF`);
     }
 
-    // Store original file for conversation history
+    // Store original file for conversation history. Images use the downscaled
+    // data URL produced for vision so a conversation stays small; PDFs are
+    // moved to disk by the chat route and replaced with a URL there.
     const base64 = fileBuffer.toString('base64');
     const dataUrl = `data:${fileMimeType};base64,${base64}`;
     userAttachments.push({
       type: fileData.type,
-      url: dataUrl,
+      url: fileData.type === 'image' ? (fileData.dataUrl || dataUrl) : dataUrl,
       mimeType: fileMimeType,
       originalName: `attachment.${fileMimeType.split('/')[1]}`,
     });
@@ -1626,7 +1644,7 @@ export async function processChatQuestion(studentId, question, subject, conversa
   // If isWebSearch flag is true (from backslash trigger) and no file attached, do web search
   if (isWebSearch && !activeFileData) {
     console.log('[Chat] isWebSearch flag set, calling confirmWebSearch');
-    return confirmWebSearch(sanitizedQuestion, subject, studentProfile);
+    return confirmWebSearch(sanitizedQuestion, subject, studentProfile, signal);
   }
 
   if (selectedChunks.length === 0 && !activeFileData) {
@@ -1672,7 +1690,7 @@ export async function processChatQuestion(studentId, question, subject, conversa
     studentProfile,
     conversation,
     memories,
-    { analysis, topicSparse }
+    { analysis, topicSparse, signal }
   );
 
   // Wrap stream to emit status events including file processing status
@@ -1698,6 +1716,11 @@ export async function processChatQuestion(studentId, question, subject, conversa
     let chunkCount = 0;
     try {
       for await (const chunk of stream) {
+        if (signal?.aborted) {
+          const abortError = new Error('Generation cancelled');
+          abortError.name = 'AbortError';
+          throw abortError;
+        }
         chunkCount++;
         if (chunk.message?.content) {
           yield { type: 'content', content: chunk.message.content };
@@ -1705,6 +1728,7 @@ export async function processChatQuestion(studentId, question, subject, conversa
       }
       console.log('[processChatQuestion] Stream completed, chunks:', chunkCount);
     } catch (err) {
+      if (err.name === 'AbortError') throw err;
       console.error('[processChatQuestion] Stream iteration error:', err);
       yield { type: 'error', message: err.message || 'Model failed to answer' };
     }
@@ -1789,7 +1813,7 @@ export async function saveConversation(studentId, subject, messages, conversatio
   return conversation;
 }
 
-export async function confirmWebSearch(question, subject, studentProfile) {
+export async function confirmWebSearch(question, subject, studentProfile, signal = null) {
   console.log('[confirmWebSearch] Starting web search for:', question);
   try {
     const searchResults = await webSearch(question, studentProfile);
@@ -1807,7 +1831,7 @@ export async function confirmWebSearch(question, subject, studentProfile) {
       };
     }
 
-    const stream = await callWebSearchLLM(question, searchResults, studentProfile);
+    const stream = await callWebSearchLLM(question, searchResults, studentProfile, signal);
 
     // Wrap stream to emit status events
     const enhancedStream = (async function* () {
@@ -1821,6 +1845,11 @@ export async function confirmWebSearch(question, subject, studentProfile) {
       let chunkCount = 0;
       try {
         for await (const chunk of stream) {
+          if (signal?.aborted) {
+            const abortError = new Error('Generation cancelled');
+            abortError.name = 'AbortError';
+            throw abortError;
+          }
           chunkCount++;
           if (chunk.message?.content) {
             yield { type: 'content', content: chunk.message.content };
@@ -1828,6 +1857,7 @@ export async function confirmWebSearch(question, subject, studentProfile) {
         }
         console.log('[confirmWebSearch] Stream completed, chunks:', chunkCount);
       } catch (err) {
+        if (err.name === 'AbortError') throw err;
         console.error('[confirmWebSearch] Stream iteration error:', err);
         yield { type: 'error', message: err.message || 'Model failed to answer' };
       }

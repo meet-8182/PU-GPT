@@ -27,6 +27,8 @@ export const authApi = {
   login: (email, password) => api.post('/auth/login', { email, password }),
   register: (data) => api.post('/auth/register', data),
   me: () => api.get('/auth/me'),
+  departments: () => api.get('/auth/departments'),
+  updateProfile: (data) => api.patch('/auth/profile', data),
 };
 
 export const documentApi = {
@@ -58,6 +60,7 @@ export const chatApi = {
     });
   },
   history: (params) => api.get('/chat/history', { params }),
+  suggestions: (params) => api.get('/chat/suggestions', { params }),
   getConversation: (id) => api.get(`/chat/history/${id}`),
   getConversationMessages: (id, params) => api.get(`/chat/history/${id}/messages`, { params }),
   deleteConversation: (id) => api.delete(`/chat/history/${id}`),
@@ -96,8 +99,17 @@ export const adminApi = {
 export const guestApi = {
   infoStatus: () => api.get('/public/info-status'),
   feedback: (vote) => api.post('/public/feedback', { vote }),
-  /** Ask the public assistant. Returns the raw axios Response so the caller can read the SSE body. No auth header is sent and nothing is stored server-side. */
-  ask: ({ message, history }, signal) => api.post('/public/ask', { message, history }),
+  /** Ask the public assistant. Returns the raw fetch Response so the caller can read the SSE body. No auth header is sent and nothing is stored server-side. */
+  ask: ({ message, history }, signal) =>
+    fetch('/api/public/ask', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({ message, history }),
+      signal,
+    }),
 };
 
 export const universityInfoApi = {

@@ -1,9 +1,14 @@
 import mongoose from 'mongoose';
 
 const attachmentSchema = new mongoose.Schema({
-  type: { type: String, enum: ['image', 'generated_image'], required: true },
+  // "pdf" is a first-class attachment type: uploaded PDFs are kept on disk and
+  // referenced by URL so a reopened conversation can restore the file without
+  // embedding megabytes of base64 in the conversation document.
+  type: { type: String, enum: ['image', 'pdf', 'generated_image'], required: true },
   url: { type: String, required: true },
   mimeType: { type: String, required: true },
+  originalName: { type: String },
+  size: { type: Number },
   width: { type: Number },
   height: { type: Number },
   prompt: { type: String },
@@ -28,6 +33,8 @@ const messageSchema = new mongoose.Schema({
     score: { type: Number },
   }],
   attachments: [attachmentSchema],
+  // Persisted so reopened conversations keep the "Web" badge.
+  isWebSearch: { type: Boolean, default: false },
   timestamp: { type: Date, default: Date.now },
   tokenCount: { type: Number, default: 0 },
 });

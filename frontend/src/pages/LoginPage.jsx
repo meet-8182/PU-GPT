@@ -1,12 +1,14 @@
 import { useState, useRef } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { BookOpen, Eye, EyeOff } from 'lucide-react';
+import { useTheme } from '@/context/ThemeContext';
+import { BookOpen, Eye, EyeOff, Sun, Moon } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
 export function LoginPage() {
   const { login, isAuthenticated } = useAuth();
+  const { isDark, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [errors, setErrors] = useState({});
@@ -66,7 +68,16 @@ export function LoginPage() {
   if (isAuthenticated) return null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="relative min-h-screen flex items-center justify-center p-4">
+      <button
+        type="button"
+        onClick={toggleTheme}
+        className="absolute right-4 top-4 p-2 rounded-lg text-chalk/60 hover:text-chalk hover:bg-rule-line transition-colors"
+        aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+        title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      >
+        {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+      </button>
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <NavLink to="/login" className="inline-flex items-center gap-2 mb-6">

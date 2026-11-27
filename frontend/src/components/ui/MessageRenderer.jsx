@@ -221,17 +221,25 @@ function AttachmentRenderer({ attachment, isUserMessage }) {
   // User uploaded file (image or PDF) - show thumbnail/card
   if (isUserMessage && (attachment.type === 'image' || attachment.type === 'pdf')) {
     const isImage = attachment.type === 'image';
-    const hasPreview = isImage && attachment.previewUrl;
+    // Persisted images carry their data URL in `url`; the optimistic message
+    // uses `previewUrl` until the server confirms it.
+    const previewSrc = attachment.previewUrl || (isImage ? attachment.url : null);
+    const displayName = attachment.name
+      || attachment.originalName
+      || (isImage ? 'Attached image' : 'Attached PDF');
+    const sizeLabel = typeof attachment.size === 'number' && attachment.size > 0
+      ? `${(attachment.size / 1024).toFixed(1)} KB`
+      : attachment.mimeType;
     
     return (
       <div className="mt-3 mb-2">
         <div className="bg-sage/5 border border-sage/20 rounded-xl p-3">
           <div className="flex items-start gap-3">
             <div className={`relative w-20 h-20 rounded-lg overflow-hidden flex-shrink-0 ${isImage ? 'bg-chalkboard/30' : 'bg-rust/10'}`}>
-              {hasPreview ? (
+              {previewSrc ? (
                 <img
-                  src={attachment.previewUrl}
-                  alt={attachment.name}
+                  src={previewSrc}
+                  alt={displayName}
                   className="w-full h-full object-cover"
                 />
               ) : (
@@ -255,8 +263,8 @@ function AttachmentRenderer({ attachment, isUserMessage }) {
                   {isImage ? 'Attached Image' : 'Attached PDF'}
                 </span>
               </div>
-              <p className="text-xs text-chalk/60 truncate">{attachment.name}</p>
-              <p className="text-xs text-chalk/50">{(attachment.size / 1024).toFixed(1)} KB</p>
+              <p className="text-xs text-chalk/60 truncate">{displayName}</p>
+              <p className="text-xs text-chalk/50">{sizeLabel}</p>
             </div>
           </div>
         </div>
@@ -310,6 +318,10 @@ function AttachmentRenderer({ attachment, isUserMessage }) {
 
   // Assistant file reference (for follow-up context) - show as card
   if (!isUserMessage && attachment.type === 'pdf') {
+    const displayName = attachment.name || attachment.originalName || 'Attached PDF';
+    const sizeLabel = typeof attachment.size === 'number' && attachment.size > 0
+      ? `${(attachment.size / 1024).toFixed(1)} KB`
+      : attachment.mimeType;
     return (
       <div className="mt-3 mb-2">
         <div className="bg-sage/5 border border-sage/20 rounded-xl p-3">
@@ -322,8 +334,8 @@ function AttachmentRenderer({ attachment, isUserMessage }) {
                 <span className="w-4 h-4 text-rust">📄</span>
                 <span className="font-medium text-xs text-chalk">Referenced PDF</span>
               </div>
-              <p className="text-xs text-chalk/60 truncate">{attachment.name}</p>
-              <p className="text-xs text-chalk/50">{(attachment.size / 1024).toFixed(1)} KB</p>
+              <p className="text-xs text-chalk/60 truncate">{displayName}</p>
+              <p className="text-xs text-chalk/50">{sizeLabel}</p>
             </div>
           </div>
         </div>

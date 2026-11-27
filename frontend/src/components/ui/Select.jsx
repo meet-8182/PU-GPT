@@ -15,7 +15,7 @@ export const Select = forwardRef(({
       )}
       <select
         ref={ref}
-        className={`w-full px-4 py-3 rounded-lg bg-rule-line/30 border appearance-none transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-amber-chalk/20 ${
+        className={`teacher-select w-full px-4 py-3 rounded-lg bg-rule-line/30 border appearance-none transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-amber-chalk/20 ${
           error 
             ? 'border-rust focus:border-rust' 
             : 'border-rule-line text-chalk focus:border-amber-chalk'
